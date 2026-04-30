@@ -1,0 +1,5 @@
+com/elderserve/caregiver/MainActivity.class
+com/elderserve/caregiver/MainActivity$1.class
+com/elderserve/caregiver/MainActivity$ClockInBridge.class
+com/elderserve/caregiver/MainActivity$LocalAssetWebChromeClient.class
+com/elderserve/caregiver/MainActivity$LocalAssetWebViewClient.class

@@ -1,0 +1,180 @@
+const DEFAULT_API_BASE_URL = "";
+const DEFAULT_API_KEY = "";
+
+let nativeRuntimeInfoCache = null;
+
+function readNativeRuntimeInfo() {
+  if (nativeRuntimeInfoCache) {
+    return nativeRuntimeInfoCache;
+  }
+
+  try {
+    const raw = window.AndroidBridge?.getRuntimeInfo?.();
+    if (!raw) {
+      nativeRuntimeInfoCache = {};
+      return nativeRuntimeInfoCache;
+    }
+
+    nativeRuntimeInfoCache = JSON.parse(raw);
+    return nativeRuntimeInfoCache;
+  } catch (error) {
+    nativeRuntimeInfoCache = {};
+    return nativeRuntimeInfoCache;
+  }
+}
+
+function resolveDefaultBaseUrl() {
+  const runtimeInfo = readNativeRuntimeInfo();
+  return String(runtimeInfo.cloudBaseUrl || DEFAULT_API_BASE_URL || "").trim();
+}
+
+function resolveDefaultApiKey() {
+  const runtimeInfo = readNativeRuntimeInfo();
+  return String(runtimeInfo.cloudApiKey || DEFAULT_API_KEY || "").trim();
+}
+
+function readOverride(key, fallback) {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value ? String(value).trim() : fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+export function getCloudApiConfig() {
+  return {
+    baseUrl: readOverride("elderCloudBaseUrl", resolveDefaultBaseUrl()).replace(/\/+$/, ""),
+    apiKey: readOverride("elderCloudApiKey", resolveDefaultApiKey()),
+  };
+}
+
+export function isCloudSyncConfigured() {
+  const config = getCloudApiConfig();
+  return Boolean(config.baseUrl && config.apiKey);
+}
+
+function buildHeaders(extraHeaders = {}) {
+  const { apiKey } = getCloudApiConfig();
+
+  return {
+    "Content-Type": "application/json",
+    "x-api-key": apiKey,
+    ...extraHeaders,
+  };
+}
+
+async function requestJson(path, init = {}) {
+  const { baseUrl } = getCloudApiConfig();
+  if (!baseUrl) {
+    throw new Error("云端地址未配置");
+  }
+
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: init.method || "GET",
+    headers: buildHeaders(init.headers || {}),
+    body: init.body,
+  });
+
+  const rawText = await response.text();
+  let payload = null;
+
+  try {
+    payload = rawText ? JSON.parse(rawText) : null;
+  } catch (error) {
+    payload = null;
+  }
+
+  if (!response.ok) {
+    const detail =
+      payload?.detail?.message ||
+      payload?.detail ||
+      payload?.message ||
+      rawText ||
+      `请求失败（${response.status}）`;
+    throw new Error(String(detail));
+  }
+
+  return payload;
+}
+
+export async function uploadCareRecord(record) {
+  return requestJson("/api/care-records", {
+    method: "POST",
+    body: JSON.stringify(record),
+  });
+}
+
+export async function fetchCareRecords(filters = {}) {
+  const search = new URLSearchParams();
+
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/care-records${suffix}`);
+}
+
+export async function uploadDailyReportTemplate(template) {
+  return requestJson("/api/daily-report-template", {
+    method: "POST",
+    body: JSON.stringify(template),
+  });
+}
+
+export async function fetchDailyReportTemplate(filters = {}) {
+  const search = new URLSearchParams();
+
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/daily-report-template${suffix}`);
+}
+
+export async function fetchDailyReportTemplates(filters = {}) {
+  const search = new URLSearchParams();
+
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/daily-report-templates${suffix}`);
+}
+
+export async function uploadPublishedTask(task) {
+  return requestJson("/api/tasks", {
+    method: "POST",
+    body: JSON.stringify(task),
+  });
+}
+
+export async function fetchPublishedTasks(filters = {}) {
+  const search = new URLSearchParams();
+
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/tasks${suffix}`);
+}
+
+export async function fetchLatestAppRelease(filters = {}) {
+  const search = new URLSearchParams();
+
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/app-releases/latest${suffix}`);
+}

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">护工端</string>
+    <string name="web_asset_entry">http://appassets.androidplatform.net/assets/app/index.html</string>
+</resources>

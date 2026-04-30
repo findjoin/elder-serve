@@ -1,0 +1,87 @@
+plugins {
+    id 'com.android.application'
+}
+
+def webSourceDir = file("${rootDir}/../caregiver-app")
+def webAssetsDir = file("${projectDir}/src/main/assets/app")
+def appVersionCodeValue = (project.findProperty('appVersionCode') ?: '1') as Integer
+def appVersionNameValue = (project.findProperty('appVersionName') ?: '1.0') as String
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { localProperties.load(it) }
+}
+def cloudApiBaseUrlValue = (project.findProperty('cloudApiBaseUrl') ?: localProperties.getProperty('cloud.apiBaseUrl') ?: '') as String
+def cloudApiKeyValue = (project.findProperty('cloudApiKey') ?: localProperties.getProperty('cloud.apiKey') ?: '') as String
+
+configurations.configureEach {
+    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk7'
+    exclude group: 'org.jetbrains.kotlin', module: 'kotlin-stdlib-jdk8'
+}
+
+tasks.register('syncWebAssets', Sync) {
+    from(webSourceDir)
+    into(webAssetsDir)
+    include('assets/**')
+    include('src/**')
+    include('index.html')
+    include('manifest.webmanifest')
+    include('service-worker.js')
+}
+
+tasks.register('prepareLauncherIcon', Copy) {
+    from("${rootDir}/../caregiver-app/assets/icons/icon-512.png")
+    into("${projectDir}/src/main/res/drawable")
+    rename { 'ic_launcher.png' }
+}
+
+tasks.named('preBuild') {
+    dependsOn(tasks.named('syncWebAssets'))
+    dependsOn(tasks.named('prepareLauncherIcon'))
+}
+
+android {
+    namespace 'com.elderserve.caregiver'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.elderserve.caregiver'
+        minSdk 26
+        targetSdk 34
+        versionCode appVersionCodeValue
+        versionName appVersionNameValue
+        multiDexKeepFile file('multidex-config.txt')
+        resValue 'string', 'cloud_api_base_url', cloudApiBaseUrlValue
+        resValue 'string', 'cloud_api_key', cloudApiKeyValue
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+            shrinkResources false
+        }
+
+        release {
+            minifyEnabled false
+            shrinkResources false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        resources {
+            excludes += ['/META-INF/{AL2.0,LGPL2.1}']
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.biometric:biometric:1.1.0'
+    implementation 'androidx.webkit:webkit:1.11.0'
+}

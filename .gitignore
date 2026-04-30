@@ -1,0 +1,44 @@
+# Local machine and secret configuration
+caregiver-android/local.properties
+*.env
+*.env.*
+*.keystore
+*.jks
+*.p12
+*.pem
+*.key
+*.crt
+
+# Build outputs and generated Android assets
+caregiver-android/.gradle/
+caregiver-android/build/
+caregiver-android/app/build/
+caregiver-android/app/src/main/assets/app/
+caregiver-android/app/src/main/res/drawable/ic_launcher.png
+
+# JavaScript dependencies and generated web output
+node_modules/
+dist/
+build/
+.cache/
+
+# Local editor and agent scratch state
+.idea/
+.vscode/
+.remote_work/
+
+# Local verification artifacts generated during emulator testing
+/*.png
+/*.jpg
+/*.jpeg
+/*.xml
+/*.db
+/*.bin
+/*.html
+/_apk_*.js
+/tmp_video_frames/
+/video-frames/
+
+# Packaged binaries
+*.apk
+*.aab
