@@ -2,6 +2,7 @@ package com.elderserve.caregiver;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ClipData;
 import android.content.ActivityNotFoundException;
 import android.content.ContentResolver;
 import android.content.ContentValues;
@@ -75,6 +76,8 @@ public class MainActivity extends AppCompatActivity {
 
     private WebView webView;
     private ValueCallback<Uri[]> fileChooserCallback;
+    @Nullable
+    private Uri pendingCameraCaptureUri;
     private ActivityResultLauncher<Intent> filePickerLauncher;
     private ActivityResultLauncher<String[]> locationPermissionLauncher;
     private BiometricPrompt biometricPrompt;
@@ -97,6 +100,8 @@ public class MainActivity extends AppCompatActivity {
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
                     Uri[] uris = null;
+                    Uri cameraUri = pendingCameraCaptureUri;
+                    pendingCameraCaptureUri = null;
 
                     if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
                         Intent data = result.getData();
@@ -109,6 +114,10 @@ public class MainActivity extends AppCompatActivity {
                         } else if (data.getData() != null) {
                             uris = new Uri[]{data.getData()};
                         }
+                    }
+
+                    if (result.getResultCode() == Activity.RESULT_OK && uris == null && cameraUri != null) {
+                        uris = new Uri[]{cameraUri};
                     }
 
                     deliverFileChooserResult(uris);
@@ -254,10 +263,44 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void deliverFileChooserResult(@Nullable Uri[] uris) {
+        pendingCameraCaptureUri = null;
         if (fileChooserCallback != null) {
             fileChooserCallback.onReceiveValue(uris);
             fileChooserCallback = null;
         }
+    }
+
+    @Nullable
+    private Uri createCameraCaptureUri() {
+        File directory = new File(getCacheDir(), "images");
+        if (!directory.exists() && !directory.mkdirs()) {
+            return null;
+        }
+
+        try {
+            File imageFile = File.createTempFile("caregiver-evidence-", ".jpg", directory);
+            return FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", imageFile);
+        } catch (IOException error) {
+            return null;
+        }
+    }
+
+    private boolean acceptsImageCapture(@Nullable WebChromeClient.FileChooserParams fileChooserParams) {
+        if (fileChooserParams == null) {
+            return false;
+        }
+
+        String[] acceptTypes = fileChooserParams.getAcceptTypes();
+        if (acceptTypes == null || acceptTypes.length == 0) {
+            return fileChooserParams.isCaptureEnabled();
+        }
+
+        for (String type : acceptTypes) {
+            if (type == null || type.trim().isEmpty() || type.toLowerCase(Locale.US).startsWith("image/")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void startClockInFlow(@Nullable String requestId) {
@@ -845,6 +888,24 @@ public class MainActivity extends AppCompatActivity {
         ) {
             deliverFileChooserResult(null);
             fileChooserCallback = filePathCallback;
+
+            if (acceptsImageCapture(fileChooserParams)) {
+                Uri captureUri = createCameraCaptureUri();
+                Intent cameraIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+                if (captureUri != null) {
+                    pendingCameraCaptureUri = captureUri;
+                    cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, captureUri);
+                    cameraIntent.setClipData(ClipData.newRawUri("caregiver-evidence", captureUri));
+                    cameraIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    cameraIntent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                    try {
+                        filePickerLauncher.launch(cameraIntent);
+                        return true;
+                    } catch (ActivityNotFoundException error) {
+                        pendingCameraCaptureUri = null;
+                    }
+                }
+            }
 
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);

@@ -116,7 +116,7 @@ export function renderAttendancePage({ state }) {
     <section class="attendance-page">
       <div class="attendance-page__hero">
         <div class="attendance-page__logo">${renderIcon("fingerprint")}</div>
-        <h1>福乐镇智慧护理</h1>
+        <h1>青禾镇智慧护理</h1>
         <p>今天是 ${getDisplayDate()}</p>
       </div>
 

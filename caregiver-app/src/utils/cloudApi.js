@@ -167,6 +167,25 @@ export async function fetchPublishedTasks(filters = {}) {
   return requestJson(`/api/tasks${suffix}`);
 }
 
+export async function uploadInstitutionState(snapshot) {
+  return requestJson("/api/institution-state", {
+    method: "POST",
+    body: JSON.stringify(snapshot),
+  });
+}
+
+export async function fetchInstitutionState(filters = {}) {
+  const search = new URLSearchParams();
+
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/institution-state${suffix}`);
+}
+
 export async function fetchLatestAppRelease(filters = {}) {
   const search = new URLSearchParams();
 

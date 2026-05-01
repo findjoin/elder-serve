@@ -26,6 +26,8 @@ build/
 .idea/
 .vscode/
 .remote_work/
+__pycache__/
+remote-main.py
 
 # Local verification artifacts generated during emulator testing
 /*.png

@@ -117,6 +117,100 @@ function renderProjectAuditPanel(selectors, { limit = 6 } = {}) {
   `;
 }
 
+function renderDirectorFloorCaregiverProgressRow(item) {
+  return `
+    <article class="director-floor-caregiver-progress-row">
+      <div class="director-floor-caregiver-progress-row__name">
+        <strong>${item.name}</strong>
+        <span>${item.role || "护工"}</span>
+      </div>
+      <div class="director-floor-caregiver-progress-row__body">
+        <div class="director-floor-caregiver-progress-row__meta">
+          <span>预期 ${item.expectedRate}</span>
+          <span>实际 ${item.actualRate}</span>
+        </div>
+        <div class="director-dual-progress" aria-label="预期和实际完成率">
+          <i class="director-dual-progress__expected" style="width:${item.expectedPercent}%"></i>
+          <i class="director-dual-progress__actual" style="width:${item.actualPercent}%"></i>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderDirectorFloorCaregiverProgressPanel(selectors) {
+  const caregivers = selectors.directorSelectedFloor.caregivers || [];
+
+  return `
+    <article class="director-card director-card--dense director-floor-caregiver-progress">
+      <div class="director-card__head director-card__head--compact">
+        <strong>全层员工执行率</strong>
+        ${renderStatusPill(`${caregivers.length} 名护工`, "success")}
+      </div>
+      <div class="director-floor-caregiver-progress-list">
+        ${
+          caregivers.length
+            ? caregivers.map(renderDirectorFloorCaregiverProgressRow).join("")
+            : '<div class="empty-state empty-state--soft">当前楼层暂无护工。</div>'
+        }
+      </div>
+    </article>
+  `;
+}
+
+function renderDirectorFloorCalendarButton(selectors) {
+  const date = selectors.directorAuditFilters?.date || "";
+
+  return `
+    <article class="director-card director-card--dense director-floor-calendar-card">
+      <label class="director-floor-calendar-button">
+        ${renderIcon("calendar")}
+        <span>选择日期</span>
+        <strong>${date}</strong>
+        <input type="date" value="${date}" data-director-audit-date aria-label="选择抽查日期" />
+      </label>
+    </article>
+  `;
+}
+
+function renderDirectorFloorElderList(selectors) {
+  const elders = selectors.directorSelectedFloor.elders || [];
+
+  return `
+    <article class="director-card director-card--dense director-floor-elder-list">
+      <div class="director-card__head director-card__head--compact">
+        <strong>老人名单</strong>
+        ${renderStatusPill(`${elders.length} 位`, "primary")}
+      </div>
+      <div class="director-project-list">
+        ${
+          elders.length
+            ? elders
+                .map(
+                  (elder) => `
+                    <button class="director-project-row director-project-row--${elder.tone || "warning"}" data-action="select-director-elder" data-value="${elder.name}">
+                      <span class="director-project-row__identity">
+                        ${renderAvatar(elder.name)}
+                        <span>
+                          <strong>${elder.name} ${elder.room} 室</strong>
+                          <small>${elder.taskCount || 0} 项任务 · 已处理 ${elder.handledCount || 0} · 异常 ${elder.issueCount || 0}</small>
+                        </span>
+                      </span>
+                      <span class="director-project-row__status">
+                        ${renderStatusPill(elder.status, elder.tone || "warning")}
+                        ${renderIcon("caretRight")}
+                      </span>
+                    </button>
+                  `,
+                )
+                .join("")
+            : '<div class="empty-state empty-state--soft">当前日期没有老人记录。</div>'
+        }
+      </div>
+    </article>
+  `;
+}
+
 function renderCloudCareRecordItem(record, selectedId) {
   const reportCount = countCheckedReportItems(record);
   const filledTime = record.filledAt || record.submittedAt || record.updatedAt || "";
@@ -544,6 +638,33 @@ function renderDispatchFilterStat(label, value, tone, filter, activeFilter) {
 
 function renderDirectorDispatchDraftDialog(draft, selectors) {
   if (!draft) return "";
+  const isCreate = draft.mode === "temporary" || !draft.taskId;
+  const statusLabel = isCreate
+    ? "临时任务"
+    : draft.status === "risk" || draft.status === "refused"
+      ? "紧急"
+      : draft.caregiverId
+        ? "已发布"
+        : "待分配";
+  const statusTone = isCreate
+    ? "warning"
+    : draft.status === "risk" || draft.status === "refused"
+      ? "error"
+      : draft.caregiverId
+        ? "success"
+        : "warning";
+  const caregiverOptions = selectors.caregiverLoads.map((item) => ({
+    value: item.id,
+    label: `${item.name} · ${item.floor}F · 待办${item.pendingCount}`,
+  }));
+  const elderPicker = selectors.directorDispatchElderPicker || {
+    floorOptions: [],
+    roomOptions: [],
+    elderOptions: [],
+    searchResults: [],
+  };
+  const timeMode = draft.timeMode === "range" ? "range" : "now";
+  const searchResults = elderPicker.searchResults || [];
 
   return `
     <div class="director-dialog-backdrop" data-action="close-director-dispatch-draft"></div>
@@ -551,23 +672,117 @@ function renderDirectorDispatchDraftDialog(draft, selectors) {
       <article class="director-dialog-card director-dialog-card--template">
         <div class="director-card__head director-card__head--compact">
           <div>
-            <strong>修改发布任务</strong>
+            <strong>${isCreate ? "发布临时任务" : "修改发布任务"}</strong>
           </div>
-          ${renderStatusPill(draft.status === "risk" || draft.status === "refused" ? "紧急" : draft.caregiverId ? "已发布" : "待分配", draft.status === "risk" || draft.status === "refused" ? "error" : draft.caregiverId ? "success" : "warning")}
+          ${renderStatusPill(statusLabel, statusTone)}
         </div>
 
         <form class="director-editor-form" data-director-dispatch-draft-form>
           <div class="director-form-grid">
-            <label class="director-field">
+            <label class="director-field director-field--temporary-title">
               <span>任务名称</span>
               <input name="title" type="text" value="${draft.title || ""}" />
             </label>
+            ${
+              isCreate
+                ? `
+                  <label class="director-field director-field--temporary-elder">
+                    <span>相关老人</span>
+                    <div class="director-temporary-elder-picker">
+                      <select name="floor" class="director-select" data-director-temporary-floor>
+                        ${renderSelectOptions(elderPicker.floorOptions || [], String(draft.floor || elderPicker.floor || ""))}
+                      </select>
+                      <select name="room" class="director-select" data-director-temporary-room>
+                        ${renderSelectOptions(elderPicker.roomOptions || [], String(draft.room || elderPicker.room || ""))}
+                      </select>
+                      <select name="elderId" class="director-select" data-director-temporary-elder>
+                        ${renderSelectOptions(elderPicker.elderOptions || [], draft.elderId || "")}
+                      </select>
+                      <button type="button" class="director-temporary-search-button" data-action="toggle-director-temporary-elder-search" aria-label="按姓名搜索老人">
+                        ${renderIcon("search")}
+                      </button>
+                    </div>
+                  </label>
+                `
+                : `
             <label class="director-field">
               <span>执行时间</span>
               <input name="schedule" type="text" value="${draft.schedule || ""}" />
             </label>
+                `
+            }
           </div>
 
+          ${
+            isCreate && draft.elderSearchOpen
+              ? `
+                <div class="director-temporary-search-panel">
+                  <input
+                    name="elderSearch"
+                    type="text"
+                    value="${draft.elderSearch || ""}"
+                    placeholder="输入老人姓名"
+                    data-director-temporary-elder-search
+                  />
+                  <div class="director-temporary-search-results">
+                    ${
+                      searchResults.length
+                        ? searchResults
+                            .map(
+                              (elder) => `
+                                <button type="button" data-action="select-director-temporary-elder" data-value="${elder.id}">
+                                  ${elder.floor}F · ${elder.room}室 · ${elder.name}
+                                </button>
+                              `,
+                            )
+                            .join("")
+                        : '<span>输入姓名后显示匹配老人</span>'
+                    }
+                  </div>
+                </div>
+              `
+              : ""
+          }
+
+          ${
+            isCreate
+              ? `
+                <div class="director-temporary-time">
+                  <div class="director-temporary-time__head">
+                    <strong>任务时间</strong>
+                    <small>${timeMode === "now" ? "发布后立即进入目标护工时间轴" : "按指定时间段进入目标护工时间轴"}</small>
+                  </div>
+                  <div class="director-temporary-time__options">
+                    <label class="director-temporary-time-card ${timeMode === "now" ? "is-active" : ""}">
+                      <input type="radio" name="timeMode" value="now" ${timeMode === "now" ? "checked" : ""} data-director-temporary-time-mode />
+                      <span>立即执行</span>
+                      <small>现在提醒</small>
+                    </label>
+                    <label class="director-temporary-time-card ${timeMode === "range" ? "is-active" : ""}">
+                      <input type="radio" name="timeMode" value="range" ${timeMode === "range" ? "checked" : ""} data-director-temporary-time-mode />
+                      <span>选择时间段</span>
+                      <small>预约提醒</small>
+                    </label>
+                  </div>
+                  ${
+                    timeMode === "range"
+                      ? `
+                        <div class="director-temporary-time__range">
+                          <label class="director-field">
+                            <span>开始</span>
+                            <input name="startTime" type="time" value="${draft.startTime || ""}" />
+                          </label>
+                          <label class="director-field">
+                            <span>结束</span>
+                            <input name="endTime" type="time" value="${draft.endTime || ""}" />
+                          </label>
+                        </div>
+                      `
+                      : ""
+                  }
+                </div>
+              `
+              : `
           <div class="director-form-grid">
             <label class="director-field">
               <span>任务状态</span>
@@ -595,29 +810,103 @@ function renderDirectorDispatchDraftDialog(draft, selectors) {
               </select>
             </label>
           </div>
+              `
+          }
 
           <label class="director-field director-field--full">
-            <span>发布给</span>
+            <span>目标护工</span>
             <select name="caregiverId" class="director-select">
               ${renderSelectOptions(
-                [
-                  { value: "", label: "暂不分配" },
-                  ...selectors.caregiverLoads.map((item) => ({ value: item.id, label: `${item.name} · ${item.floor}F · 待办${item.pendingCount}` })),
-                ],
+                isCreate ? caregiverOptions : [{ value: "", label: "暂不分配" }, ...caregiverOptions],
                 draft.caregiverId || "",
               )}
             </select>
           </label>
 
           <label class="director-field director-field--full">
-            <span>执行说明</span>
-            <textarea name="note" rows="3">${draft.note || ""}</textarea>
+            <span>任务描述</span>
+            <textarea name="${isCreate ? "description" : "note"}" rows="3">${draft.description || draft.note || ""}</textarea>
           </label>
         </form>
 
         <div class="director-editor-actions">
           <button class="button button--muted" data-action="close-director-dispatch-draft">取消</button>
-          <button class="button button--primary" data-action="save-director-dispatch-draft">保存调整</button>
+          <button class="button button--primary" data-action="save-director-dispatch-draft">${isCreate ? "发布任务" : "保存调整"}</button>
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function renderDirectorPlanNoteDraftDialog(draft) {
+  if (!draft) return "";
+
+  return `
+    <div class="director-dialog-backdrop" data-action="close-director-plan-note-draft"></div>
+    <section class="director-dialog-shell director-dialog-shell--template">
+      <article class="director-dialog-card director-dialog-card--template director-plan-note-edit-dialog">
+        <div class="director-card__head director-card__head--compact">
+          <div>
+            <strong>编辑建议与注意事项</strong>
+          </div>
+          ${renderStatusPill("同步护工端", "warning")}
+        </div>
+        <label class="director-field director-field--full">
+          <span>内容</span>
+          <textarea rows="6" data-director-plan-note-input>${draft.note || ""}</textarea>
+        </label>
+        <div class="director-editor-actions">
+          <button class="button button--muted" data-action="close-director-plan-note-draft">取消</button>
+          <button class="button button--primary" data-action="save-director-plan-note-draft">保存</button>
+        </div>
+      </article>
+    </section>
+  `;
+}
+
+function getDirectorTemporaryStatusText(task) {
+  if (task.status === "completed") return "已完成";
+  if (task.status === "risk") return "异常";
+  if (task.status === "refused") return "不配合";
+  return task.caregiverId ? "待处理" : "未分配";
+}
+
+function renderDirectorPlanTemporaryDialog(plan) {
+  if (!plan) return "";
+  const tasks = plan.temporaryTasks || [];
+
+  return `
+    <div class="director-dialog-backdrop" data-action="close-director-plan-temporary-dialog"></div>
+    <section class="director-dialog-shell director-dialog-shell--template">
+      <article class="director-dialog-card director-dialog-card--template director-plan-temporary-dialog">
+        <div class="director-card__head director-card__head--compact">
+          <div>
+            <strong>${plan.elder?.room || "--"}室 · ${plan.elder?.name || "老人"}临时任务</strong>
+          </div>
+          ${renderStatusPill(`${tasks.length}项`, "warning")}
+        </div>
+        <div class="director-plan-temporary-dialog-list">
+          ${
+            tasks.length
+              ? tasks
+                  .map((task) => {
+                    const caregiverName = task.caregiver?.name || task.assignedCaregiver?.name || task.caregiverName || "未分配";
+                    return `
+                      <article class="director-plan-temporary-item">
+                        <div>
+                          <strong>${task.title || "临时任务"}</strong>
+                          <small>${task.schedule || "立即"} · 分配给 ${caregiverName}</small>
+                        </div>
+                        ${renderStatusPill(getDirectorTemporaryStatusText(task), task.status === "completed" ? "success" : task.status === "risk" || task.status === "refused" ? "error" : "warning")}
+                      </article>
+                    `;
+                  })
+                  .join("")
+              : '<div class="empty-state empty-state--soft">这位老人今天没有临时任务。</div>'
+          }
+        </div>
+        <div class="director-editor-actions">
+          <button class="button button--primary" data-action="close-director-plan-temporary-dialog">知道了</button>
         </div>
       </article>
     </section>
@@ -639,12 +928,134 @@ function renderProgressMeter(value, tone = "success") {
   `;
 }
 
+function renderDirectorTaskOverviewBars(overview) {
+  const expected = overview?.expectedPercent || 0;
+  const actual = overview?.actualPercent || 0;
+  const temporary = overview?.temporaryPercent || 0;
+
+  return `
+    <div class="director-task-overview-bars">
+      <div class="director-task-overview-bars__head">
+        <span>预期 ${overview.expectedDue}/${overview.dailyTotal}</span>
+        <span>实际 ${overview.actualHandled}/${overview.dailyTotal}</span>
+        <span>临时 ${overview.temporaryHandled}/${overview.temporaryTotal}</span>
+      </div>
+      <div class="director-progress-stack" aria-hidden="true">
+        <span class="director-progress-stack__expected" style="width: ${expected}%;"></span>
+        <span class="director-progress-stack__actual" style="width: ${actual}%;"></span>
+        <span class="director-progress-stack__temporary" style="width: ${temporary}%;"></span>
+      </div>
+      <div class="director-task-overview-legend">
+        <span><i class="is-expected"></i>预期进度</span>
+        <span><i class="is-actual"></i>实际完成</span>
+        <span><i class="is-temporary"></i>临时任务</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderDirectorLiveClock(timeLabel = "") {
+  return `
+    <div class="director-live-clock" data-live-clock>${timeLabel || "--:--"}</div>
+  `;
+}
+
 function renderCommandMetric(label, value, helper, tone = "primary") {
   return `
     <article class="director-command-metric director-command-metric--${tone}">
       <p>${label}</p>
       <strong>${value}</strong>
       <small>${helper}</small>
+    </article>
+  `;
+}
+
+function renderDirectorStatTaskLine(task, emptyText) {
+  if (!task) return `<li>${emptyText}</li>`;
+  const elder = task.elder ? `${task.elder.room}室 · ${task.elder.name}` : "未绑定老人";
+  return `<li><strong>${task.schedule} ${task.title}</strong><span>${elder}</span></li>`;
+}
+
+function renderDirectorCaregiverStatCard(item, selectedId) {
+  const selected = item.id === selectedId;
+
+  return `
+    <button
+      type="button"
+      class="director-caregiver-stat-card director-caregiver-stat-card--${item.tone} ${selected ? "is-active" : ""}"
+      data-action="select-director-stat-caregiver"
+      data-value="${item.id}"
+    >
+      <span class="director-caregiver-stat-card__dot"></span>
+      <span class="director-caregiver-stat-card__main">
+        <strong>${item.name}</strong>
+        <small>${item.role} · ${item.floor}F · ${item.progressRate}</small>
+      </span>
+      ${renderStatusPill(item.statusLabel, item.tone)}
+    </button>
+  `;
+}
+
+function renderDirectorCaregiverStatDetail(item) {
+  if (!item) return "";
+
+  return `
+    <article class="director-card director-card--dense director-caregiver-stat-detail">
+      <div class="director-card__head director-card__head--compact">
+        <div>
+          <strong>${item.name}</strong>
+        </div>
+        ${renderStatusPill(item.statusLabel, item.tone)}
+      </div>
+      <div class="director-stat-task-columns">
+        <section>
+          <h3>未按时完成</h3>
+          <ul>
+            ${
+              item.overdueTasks.length
+                ? item.overdueTasks.map((task) => renderDirectorStatTaskLine(task, "暂无超时任务")).join("")
+                : renderDirectorStatTaskLine(null, "暂无超时任务")
+            }
+          </ul>
+        </section>
+        <section>
+          <h3>当前任务</h3>
+          <ul>
+            ${renderDirectorStatTaskLine(item.currentTasks[0] || item.nextTask, "当前没有待处理任务")}
+          </ul>
+        </section>
+      </div>
+    </article>
+  `;
+}
+
+function renderDirectorExceptionReportCard(report) {
+  return `
+    <article class="director-card director-card--dense director-exception-report">
+      <div class="director-card__head director-card__head--compact">
+        <div>
+          <strong>${report.room}室 · ${report.elderName} · ${report.title}</strong>
+          <div class="director-exception-report__meta">
+            <span>负责护工：${report.caregiverName}</span>
+            <span>${report.schedule}</span>
+          </div>
+        </div>
+        ${renderStatusPill(report.statusLabel, "error")}
+      </div>
+      <p class="director-copy">${report.note}</p>
+      <div class="director-exception-report__photos">
+        ${
+          report.evidence.length
+            ? report.evidence
+                .map((item) =>
+                  item.dataUrl
+                    ? `<img src="${item.dataUrl}" alt="${item.name || "异常照片"}" />`
+                    : `<span>${item.name || "异常照片"}</span>`,
+                )
+                .join("")
+            : '<span>暂无照片</span>'
+        }
+      </div>
     </article>
   `;
 }
@@ -909,8 +1320,10 @@ function summarizePlanPeriods(items) {
 
 function renderPlanTimelineEntry(item, { editable = false } = {}) {
   const template = item.template || null;
-  const title = template?.title || "未选择任务模板";
+  const title = item.title || template?.title || "未选择任务模板";
   const note = String(item.note || "").trim();
+  const sourceText = item.sourceLabel || template?.category || "任务模板";
+  const assignmentText = item.assignment ? renderPlanAssignmentLabel(item.assignment) : item.caregiver?.name || item.assignmentLabel || "实时任务";
 
   return `
     <article class="director-timeline__item director-timeline__item--plan">
@@ -925,9 +1338,9 @@ function renderPlanTimelineEntry(item, { editable = false } = {}) {
         <div class="director-timeline__card-head">
           <div>
             <strong>${title}</strong>
-            <small>${template?.category || "任务模板"} · ${renderPlanAssignmentLabel(item.assignment)}</small>
+            <small>${sourceText} · ${assignmentText}</small>
           </div>
-          ${renderStatusPill(item.isEnabled === false ? "已停用" : "已启用", item.isEnabled === false ? "warning" : "success")}
+          ${renderStatusPill(item.status === "completed" ? "已完成" : item.isEnabled === false ? "已停用" : "进行中", item.status === "completed" ? "success" : item.isEnabled === false ? "warning" : "primary")}
         </div>
         ${note ? `<p class="director-timeline__copy">${note}</p>` : ""}
         ${
@@ -991,11 +1404,17 @@ export function renderSelectedPlan(plan, resident, isTimelineOpen = false) {
     `;
   }
 
-  const timelineItems = [...plan.items].sort((left, right) => left.schedule.localeCompare(right.schedule));
+  const timelineItems = [...(plan.timelineTasks?.length ? plan.timelineTasks : plan.items)].sort((left, right) =>
+    String(left.schedule || "").localeCompare(String(right.schedule || "")),
+  );
   const periodSummary = summarizePlanPeriods(timelineItems);
   const manualTaskCount = plan.manualCount || 0;
   const firstItem = timelineItems[0];
-  const firstItemLabel = firstItem ? `${firstItem.schedule} ${firstItem.template?.title || ""}`.trim() : "暂无时间轴";
+  const firstItemLabel = firstItem ? `${firstItem.schedule} ${firstItem.title || firstItem.template?.title || ""}`.trim() : "暂无时间轴";
+  const expectedPercent = Math.max(0, Math.min(100, Number(plan.expectedPercent || 0)));
+  const actualPercent = Math.max(0, Math.min(100, Number(plan.actualPercent || 0)));
+  const temporaryTaskCount = Number(plan.temporaryTaskCount || 0);
+  const planNote = String(plan.note || "").trim();
 
   return `
     <article class="director-plan-summary director-plan-summary--focus ${isTimelineOpen ? "is-condensed" : ""}">
@@ -1005,16 +1424,32 @@ export function renderSelectedPlan(plan, resident, isTimelineOpen = false) {
           <strong>${isTimelineOpen ? "当前护理方案" : "护理方案总览"}</strong>
           <small>${isTimelineOpen ? `${plan.level} · 左侧时间轴已展开` : `${plan.level} · ${firstItemLabel}`}</small>
         </div>
-        <button type="button" class="button button--small button--primary" data-action="open-plan-draft">调整方案</button>
       </div>
-      ${
-        !isTimelineOpen && plan.note
-          ? `<div class="director-plan-note">${plan.note}</div>`
-          : ""
-      }
+      <div class="director-plan-note-row">
+        <div class="director-plan-note">${planNote || "暂无建议与注意事项"}</div>
+        <button type="button" class="director-plan-note-edit" data-action="open-director-plan-note-draft" data-value="${plan.elder.id}" aria-label="编辑建议与注意事项">
+          ${renderIcon("edit")}
+        </button>
+      </div>
       ${
         !isTimelineOpen
           ? `
+            <div class="director-plan-progress-compare">
+              <div class="director-plan-progress-compare__head">
+                <strong>今日日报进度</strong>
+                <button type="button" data-action="open-director-plan-temporary-dialog" data-value="${plan.elder.id}">
+                  临时任务 ${temporaryTaskCount}
+                </button>
+              </div>
+              <div class="director-plan-progress-line">
+                <span style="width: ${expectedPercent}%"></span>
+                <i style="width: ${actualPercent}%"></i>
+              </div>
+              <div class="director-plan-progress-legend">
+                <span><em class="is-expected"></em>预期 ${plan.expectedDue || 0}/${plan.dailyTaskTotal || 0}</span>
+                <span><em class="is-actual"></em>实际 ${plan.actualHandled || 0}/${plan.dailyTaskTotal || 0}</span>
+              </div>
+            </div>
             <div class="director-plan-quick-stats">
               <span class="director-plan-quick-stat">${plan.enabledCount}项已启用</span>
               <span class="director-plan-quick-stat ${manualTaskCount ? "is-warning" : ""}">
@@ -1068,7 +1503,9 @@ function renderPlanTimelineSidebar(plan, resident, isOpen = false) {
     `;
   }
 
-  const timelineItems = [...plan.items].sort((left, right) => left.schedule.localeCompare(right.schedule));
+  const timelineItems = [...(plan.timelineTasks?.length ? plan.timelineTasks : plan.items)].sort((left, right) =>
+    String(left.schedule || "").localeCompare(String(right.schedule || "")),
+  );
   const periodSummary = summarizePlanPeriods(timelineItems);
   const manualTaskCount = plan.manualCount || 0;
 
@@ -1112,9 +1549,6 @@ function renderPlanTimelineSidebar(plan, resident, isOpen = false) {
           </div>
         </section>
 
-        <div class="director-plan-sidebar__actions">
-          <button type="button" class="button button--primary button--block" data-action="open-plan-draft">调整方案</button>
-        </div>
       </div>
     </aside>
   `;
@@ -1321,7 +1755,7 @@ function renderDispatchTaskCard(task) {
         <p>${task.scopeLabel} · ${task.schedule}</p>
       </div>
       <div class="director-dispatch-row__meta">
-        <span>${task.assignmentMode === "manual" ? "手动发布" : "特殊模板"}</span>
+        <span>${task.assignmentMode === "temporary" || task.templateGroup === "temporary" ? "临时任务" : task.assignmentMode === "manual" ? "手动发布" : "特殊模板"}</span>
         <span>${task.receiptLabel}</span>
         <span>${task.requirePhoto ? "拍照" : "文字"}</span>
         <span>${assigneeLabel}</span>
@@ -2583,17 +3017,58 @@ export function renderDirectorCareRecordsPage({ state, selectors }) {
 export function renderDirectorHomePage({ state, selectors }) {
   const { taskProgress, floors } = state.director;
   const inventoryMeta = `${state.director.inventorySummary.warningCount} 项预警`;
-  const anomalyMeta = `${state.director.anomalyRecords.length} 条记录`;
-  const statisticsMeta = `${state.director.statistics.length} 项指标`;
+  const anomalyMeta = `${selectors.directorExceptionReports?.length || 0} 条记录`;
   const issueFloorCount = floors.filter((floor) => floor.error > 0).length;
   const executionRate = taskProgress.executionRate || taskProgress.rate;
   const handledCount = taskProgress.handled ?? taskProgress.completed;
+  const overview = selectors.directorTaskOverview || {
+    dailyTotal: taskProgress.total,
+    expectedDue: 0,
+    actualHandled: handledCount,
+    temporaryTotal: 0,
+    temporaryHandled: 0,
+    expectedRate: "0%",
+    actualRate: executionRate,
+    temporaryRate: "0%",
+    exceptionCount: taskProgress.issue || 0,
+  };
 
   return `
     <section class="director-page">
       ${renderDirectorHeader("院长工作台", state.director.date)}
 
       <div class="director-stack">
+        <article class="director-command-center">
+          <div class="director-command-center__head">
+            <div>
+              <p>今日进度</p>
+              <div class="director-command-title-row director-command-title-row--overview">
+                ${renderDirectorLiveClock(overview.nowLabel)}
+                <h2>任务总览</h2>
+                <button type="button" class="director-inline-stat-button" data-action="navigate" data-route="director-statistics">
+                  ${renderIcon("chart")}
+                  统计
+                </button>
+              </div>
+            </div>
+            ${renderStatusPill(issueFloorCount ? `${issueFloorCount} 个楼层需关注` : "运行平稳", issueFloorCount ? "error" : "success")}
+          </div>
+
+          <div class="director-command-center__progress">
+            <div>
+              <span>任务进度</span>
+              <strong>${overview.actualRate || executionRate}</strong>
+            </div>
+            ${renderDirectorTaskOverviewBars(overview)}
+          </div>
+
+          <div class="director-command-grid">
+            ${renderCommandMetric("预期进度", overview.expectedRate || "0%", `应完成 ${overview.expectedDue || 0}/${overview.dailyTotal || 0}`, "primary")}
+            ${renderCommandMetric("实际完成", overview.actualRate || "0%", `已完成 ${overview.actualHandled || 0}/${overview.dailyTotal || 0}`, "success")}
+            ${renderCommandMetric("异常事件", `${overview.exceptionCount || 0}`, "员工异常报告", overview.exceptionCount ? "error" : "success")}
+          </div>
+        </article>
+
         <article class="director-card">
           <div class="director-card__head">
             <div>
@@ -2606,36 +3081,10 @@ export function renderDirectorHomePage({ state, selectors }) {
           </div>
         </article>
 
-        <article class="director-command-center">
-          <div class="director-command-center__head">
-            <div>
-              <p>今日进度</p>
-              <h2>任务总览</h2>
-            </div>
-            ${renderStatusPill(issueFloorCount ? `${issueFloorCount} 个楼层需关注` : "运行平稳", issueFloorCount ? "error" : "success")}
-          </div>
-
-          <div class="director-command-center__progress">
-            <div>
-              <span>护工执行率</span>
-              <strong>${executionRate}</strong>
-            </div>
-            ${renderProgressMeter(executionRate, taskProgress.risk ? "error" : "success")}
-          </div>
-
-          <div class="director-command-grid">
-            ${renderCommandMetric("已处理", `${handledCount}/${taskProgress.total}`, "含异常/不配合留痕", "success")}
-            ${renderCommandMetric("异常占比", taskProgress.issueRate || "0%", `${taskProgress.issue || 0} 项异常`, taskProgress.issue ? "error" : "success")}
-            ${renderCommandMetric("不配合", taskProgress.refusedRate || "0%", `${taskProgress.refused || 0} 项不配合`, taskProgress.refused ? "warning" : "success")}
-          </div>
-          <p class="director-metric-note">口径：护工执行率含异常/不配合，表示任务已处理并留痕；异常占比单独反映风险情况。</p>
-        </article>
-
         <div class="director-support-grid director-support-grid--overview">
           ${[
             { route: "director-anomaly", icon: "warning", title: "异常", meta: anomalyMeta, tone: "error" },
             { route: "director-inventory", icon: "package", title: "库存", meta: inventoryMeta, tone: "primary" },
-            { route: "director-statistics", icon: "chart", title: "统计", meta: statisticsMeta, tone: "success" },
             { route: "director-care-records", icon: "calendar", title: "日报收件箱", meta: "云端 / A4", tone: "success" },
           ]
             .map((item) => renderSupportShortcut(item.route, item.icon, item.title, item.meta, item.tone))
@@ -2752,11 +3201,8 @@ export function renderDirectorCarePlansPage({ state, selectors }) {
   const planTemplateAction = selectors.directorPlanDraft
     ? ""
     : `
-      <button type="button" class="director-header-action-button" data-action="navigate" data-route="director-dispatch">
-        发布
-      </button>
-      <button type="button" class="director-header-action-button" data-action="navigate" data-route="director-template-library">
-        模板
+      <button type="button" class="director-header-action-button" data-action="open-director-temporary-task">
+        发布临时任务
       </button>
     `;
   const planHeaderActions = `${planTemplateAction}${planSearchAction}`;
@@ -2849,6 +3295,9 @@ export function renderDirectorCarePlansPage({ state, selectors }) {
           </div>
         </section>
       </div>
+      ${renderDirectorDispatchDraftDialog(selectors.directorDispatchDraft, selectors)}
+      ${renderDirectorPlanNoteDraftDialog(selectors.directorPlanNoteDraft)}
+      ${renderDirectorPlanTemporaryDialog(selectors.directorPlanTemporaryDialog)}
     </section>
   `;
 }
@@ -2896,37 +3345,9 @@ export function renderDirectorFloorDetailPage({ state, selectors }) {
       ${renderDirectorHeader(`${state.ui.selectedDirectorFloor} 楼层状态`, state.director.date)}
 
       <div class="director-stack">
-        <article class="director-card director-card--hero">
-          <p>全层护工执行率</p>
-          <strong>${selectors.directorSelectedFloor.completion}</strong>
-          <small>含异常/不配合留痕 · 异常占比 ${selectors.directorSelectedFloor.issueRate || "0%"}</small>
-        </article>
-
-        ${renderDirectorAuditFilters(selectors, { showFloor: false })}
-        ${renderProjectAuditPanel(selectors, { limit: 12 })}
-
-        <div class="director-record-list">
-          ${selectors.directorSelectedFloor.elders
-            .map(
-              (elder) => `
-                <button class="director-record-card" data-action="select-director-elder" data-value="${elder.name}">
-                  <span class="director-record-card__identity">
-                    ${renderAvatar(elder.name)}
-                    <span>
-                      <strong>${elder.name}</strong>
-                      <small>${elder.room} 室</small>
-                    </span>
-                  </span>
-                  <span class="director-record-card__status">
-                    <small>${elder.status}</small>
-                    ${elder.anomaly ? `<em>${elder.anomaly}</em>` : ""}
-                    ${renderIcon("caretRight")}
-                  </span>
-                </button>
-              `,
-            )
-            .join("")}
-        </div>
+        ${renderDirectorFloorCaregiverProgressPanel(selectors)}
+        ${renderDirectorFloorCalendarButton(selectors)}
+        ${renderDirectorFloorElderList(selectors)}
       </div>
     </section>
   `;
@@ -3510,56 +3931,47 @@ export function renderDirectorInventoryPage({ state }) {
   `;
 }
 
-export function renderDirectorAnomalyPage({ state }) {
+export function renderDirectorAnomalyPage({ state, selectors }) {
+  const reports = selectors.directorExceptionReports || [];
+
   return `
     <section class="director-page">
-      ${renderDirectorHeader("异常记录详情", state.director.date)}
+      ${renderDirectorHeader("异常状态", state.director.date)}
 
       <div class="director-stack">
-        ${state.director.anomalyRecords
-          .map(
-            (item) => `
-              <article class="director-card">
-                <div class="director-card__head director-card__head--compact">
-                  <div>
-                    <strong>${item.type}</strong>
-                    <p>${item.time} · ${item.elder} · ${item.room}</p>
-                  </div>
-                  ${renderStatusPill("跟进中", "error")}
-                </div>
-                <p class="director-copy">${item.description}</p>
-                <div class="director-photo-slot">${item.photoLabel}</div>
-                <div class="director-card__meta">
-                  <span>处理进展：${item.followUp}</span>
-                  <span>${renderIcon("arrowRight")} 查看流转</span>
-                </div>
-              </article>
-            `,
-          )
-          .join("")}
+        ${
+          reports.length
+            ? reports.map(renderDirectorExceptionReportCard).join("")
+            : '<div class="empty-state empty-state--soft">当前没有员工上传的异常任务报告。</div>'
+        }
       </div>
     </section>
   `;
 }
 
-export function renderDirectorStatisticsPage({ state }) {
+export function renderDirectorStatisticsPage({ state, selectors }) {
+  const caregiverStats = selectors.directorCaregiverStatistics || [];
+  const selectedStat = selectors.selectedDirectorCaregiverStat;
+  const exceptionCount = selectors.directorExceptionReports?.length || 0;
+
   return `
     <section class="director-page">
-      ${renderDirectorHeader("数据统计总览", state.director.date)}
+      ${renderDirectorHeader("任务统计", state.director.date)}
 
       <div class="director-stack">
-        <div class="director-kpi-grid">
-          ${state.director.statistics
-            .map(
-              (item) => `
-                <article class="director-kpi-card director-kpi-card--${item.tone}">
-                  <p>${item.label}</p>
-                  <strong>${item.value}</strong>
-                </article>
-              `,
-            )
-            .join("")}
+        <button type="button" class="director-exception-entry" data-action="navigate" data-route="director-anomaly">
+          <span>
+            <strong>异常状态</strong>
+            <small>查看员工上传的异常任务报告</small>
+          </span>
+          ${renderStatusPill(`${exceptionCount} 条`, exceptionCount ? "error" : "success")}
+        </button>
+
+        <div class="director-caregiver-stat-list">
+          ${caregiverStats.map((item) => renderDirectorCaregiverStatCard(item, state.ui.selectedDirectorStatisticsCaregiverId)).join("")}
         </div>
+
+        ${renderDirectorCaregiverStatDetail(selectedStat)}
       </div>
     </section>
   `;

@@ -50,7 +50,7 @@ function renderInfoDialog(state, runtimeInfo) {
     },
     about: {
       title: "关于我们",
-      body: "<strong>福乐镇智慧养老院</strong><span>面向乡镇养老院的护理记录、任务分配和日报归档系统。</span>",
+      body: "<strong>青禾镇颐养护理院</strong><span>面向乡镇养老院的护理记录、任务分配和日报归档系统。</span>",
     },
     contact: {
       title: "联系开发者",
@@ -137,7 +137,7 @@ export function renderLoginPage({ state } = {}) {
         <div class="role-select-page__logo">
           ${renderIcon("home")}
         </div>
-        <h1>福乐镇智慧养老院</h1>
+        <h1>青禾镇颐养护理院</h1>
         <p>科技守护，情暖夕阳</p>
       </div>
 

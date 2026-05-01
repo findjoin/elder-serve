@@ -37,7 +37,11 @@ let isRestoringBrowserHistory = false;
 let lastHistorySignature = "";
 let directorCloudPollTimer = 0;
 let caregiverTaskPollTimer = 0;
+let institutionStatePollTimer = 0;
+let liveClockTimer = 0;
 let reportTemplateScheduleDrag = null;
+let skipCaregiverTimelineAutoFocus = false;
+let lastCaregiverTimelineFocusKey = "";
 
 const REPORT_TEMPLATE_SCHEDULE_START_MINUTES = 0;
 const REPORT_TEMPLATE_SCHEDULE_END_MINUTES = 24 * 60;
@@ -186,6 +190,150 @@ function renderToast() {
   return state.ui.toast ? `<div class="toast">${state.ui.toast}</div>` : "";
 }
 
+function escapeHtml(value = "") {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function normalizeTaskEvidence(evidence) {
+  if (!evidence) return { name: "", dataUrl: "", capturedAt: "" };
+  if (typeof evidence === "string") return { name: evidence, dataUrl: "", capturedAt: "" };
+  return {
+    name: String(evidence.name || ""),
+    dataUrl: String(evidence.dataUrl || ""),
+    capturedAt: String(evidence.capturedAt || ""),
+  };
+}
+
+function normalizeTaskEvidenceList(evidence) {
+  if (!evidence) return [];
+  const source = Array.isArray(evidence) ? evidence : [evidence];
+  return source.map(normalizeTaskEvidence).filter((item) => item.name || item.dataUrl);
+}
+
+function renderTaskRecordDialog() {
+  const dialog = state.ui.taskRecordDialog;
+  if (state.session.identity !== "caregiver" || !dialog) return "";
+
+  const isQuick = dialog.type === "quick";
+  const isException = dialog.type === "exception";
+  const task = isQuick ? null : state.tasks.find((item) => item.id === dialog.taskId);
+  if (!isQuick && !task) return "";
+
+  const elder = isQuick
+    ? state.elders.find((item) => item.id === dialog.elderId)
+    : state.elders.find((item) => item.id === task.elderId);
+  if (isQuick && !elder) return "";
+  const evidenceKey = isQuick ? elder.id : task.id;
+  const evidenceKind = isQuick ? "quick" : isException ? "exception" : "record";
+  const evidenceSource = isQuick
+    ? state.ui.quickExceptionEvidence?.[evidenceKey]
+    : isException
+      ? state.ui.taskExceptionEvidence?.[evidenceKey]
+      : state.ui.taskRecordEvidence?.[evidenceKey] || state.ui.taskEvidence?.[evidenceKey];
+  const evidenceList = normalizeTaskEvidenceList(evidenceSource).slice(0, 6);
+  const noteSource = isQuick
+    ? state.ui.quickExceptionNotes?.[evidenceKey]
+    : isException
+      ? state.ui.taskExceptionNotes?.[evidenceKey]
+      : state.ui.taskRecordNotes?.[evidenceKey] || state.ui.taskNotes?.[evidenceKey];
+  const note = dialog.note ?? noteSource ?? "";
+  const title = isQuick ? "快速异常上报" : isException ? "异常记录" : "任务记录";
+  const meta = isQuick
+    ? `${elder.room}室 · ${elder.name}`
+    : `${elder ? `${elder.room}室 · ${elder.name}` : ""} ${task.schedule} · ${task.title}`;
+  const previewIndex = Number.isInteger(dialog.previewIndex) ? dialog.previewIndex : null;
+  const previewEvidence = previewIndex !== null ? evidenceList[previewIndex] : null;
+  const targetAttrs = `
+    data-evidence-task="${task ? task.id : ""}"
+    data-evidence-elder="${elder ? elder.id : ""}"
+    data-evidence-kind="${evidenceKind}"
+  `;
+
+  return `
+    <section class="task-record-modal" role="dialog" aria-modal="true">
+      <button class="task-record-modal__backdrop" type="button" data-action="close-task-record-dialog" aria-label="关闭记录"></button>
+      <article class="task-record-modal__dialog">
+        <header class="task-record-modal__head">
+          <div>
+            <strong>${title}</strong>
+            <small>${meta}</small>
+          </div>
+          <button class="icon-button" type="button" data-action="close-task-record-dialog">${renderIcon("close")}</button>
+        </header>
+
+        <div class="task-record-modal__photo">
+          <div class="task-record-photo-grid">
+            ${evidenceList
+              .map(
+                (evidence, index) => `
+                  <button
+                    class="task-record-thumb"
+                    type="button"
+                    data-action="preview-task-evidence"
+                    ${targetAttrs}
+                    data-evidence-index="${index}"
+                    data-evidence-preview-task="${task ? task.id : ""}"
+                    data-evidence-preview-elder="${elder ? elder.id : ""}"
+                    data-evidence-preview-kind="${evidenceKind}"
+                    data-evidence-preview-index="${index}"
+                  >
+                    ${
+                      evidence.dataUrl
+                        ? `<img src="${escapeHtml(evidence.dataUrl)}" alt="${escapeHtml(evidence.name || "任务照片")}" />`
+                        : `<span>${escapeHtml(evidence.name || "照片")}</span>`
+                    }
+                  </button>
+                `,
+              )
+              .join("")}
+            ${
+              evidenceList.length < 6
+                ? `<label class="task-record-thumb task-record-thumb--add">
+            <input
+              class="visually-hidden"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              ${targetAttrs}
+            />
+            <span>+</span>
+          </label>`
+                : ""
+            }
+          </div>
+          <p>${evidenceList.length ? `已添加 ${evidenceList.length}/6 张，长按缩略图可删除` : "暂无照片"}</p>
+        </div>
+
+        <label class="task-record-modal__field">
+          <span>${isException || isQuick ? "异常说明" : "文字记录"}</span>
+          <textarea
+            rows="5"
+            data-task-record-note
+            placeholder="${isException || isQuick ? "填写异常情况、处理经过或后续提醒" : "填写护理过程、补充说明或交接事项"}"
+          >${escapeHtml(note)}</textarea>
+        </label>
+
+        <div class="task-record-modal__actions">
+          <button class="button button--muted" type="button" data-action="close-task-record-dialog">取消</button>
+          <button class="button button--primary" type="button" data-action="save-task-record-dialog">保存</button>
+        </div>
+      </article>
+      ${
+        previewEvidence?.dataUrl
+          ? `<button class="task-record-lightbox" type="button" data-action="close-task-evidence-preview" aria-label="返回记录">
+              <img src="${escapeHtml(previewEvidence.dataUrl)}" alt="${escapeHtml(previewEvidence.name || "任务照片")}" />
+            </button>`
+          : ""
+      }
+    </section>
+  `;
+}
+
 function getPrimaryScrollContainer() {
   const routeScroller = app.querySelector(".director-page--care-plans");
   if (routeScroller && (routeScroller.scrollTop > 0 || routeScroller.scrollHeight > routeScroller.clientHeight + 4)) {
@@ -209,6 +357,10 @@ function getScrollSnapshot() {
     content: app.querySelector(".content-area")?.scrollTop || 0,
     directorPlan: app.querySelector(".director-page--care-plans")?.scrollTop || 0,
     directorPlanFloorStrip: app.querySelector(".director-plan-floor-strip")?.scrollLeft || 0,
+    caregiverTimeline:
+      app.querySelector("[data-caregiver-timeline-fullscreen-list]")?.scrollTop ||
+      app.querySelector("[data-caregiver-timeline-list]")?.scrollTop ||
+      0,
     reportTemplateDialog: app.querySelector(".director-report-template-modal__dialog")?.scrollTop || 0,
     reportTemplateSchedule: app.querySelector(".director-report-schedule-page__body")?.scrollTop || 0,
     reportTemplateSections,
@@ -222,6 +374,7 @@ function normalizeScrollSnapshot(value) {
       content: Number(value.content) || 0,
       directorPlan: Number(value.directorPlan) || 0,
       directorPlanFloorStrip: Number(value.directorPlanFloorStrip) || 0,
+      caregiverTimeline: Number(value.caregiverTimeline) || 0,
       reportTemplateDialog: Number(value.reportTemplateDialog) || 0,
       reportTemplateSchedule: Number(value.reportTemplateSchedule) || 0,
       reportTemplateSections:
@@ -237,6 +390,7 @@ function normalizeScrollSnapshot(value) {
     content: scrollTop,
     directorPlan: scrollTop,
     directorPlanFloorStrip: 0,
+    caregiverTimeline: 0,
     reportTemplateDialog: 0,
     reportTemplateSchedule: 0,
     reportTemplateSections: {},
@@ -289,6 +443,12 @@ function restoreScrollPosition(route) {
       directorPlanFloorStrip.scrollLeft = snapshot.directorPlanFloorStrip;
     }
 
+    const caregiverTimeline =
+      app.querySelector("[data-caregiver-timeline-fullscreen-list]") || app.querySelector("[data-caregiver-timeline-list]");
+    if (caregiverTimeline) {
+      caregiverTimeline.scrollTop = snapshot.caregiverTimeline;
+    }
+
     const reportTemplateDialog = app.querySelector(".director-report-template-modal__dialog");
     if (reportTemplateDialog) {
       reportTemplateDialog.scrollTop = snapshot.reportTemplateDialog;
@@ -318,6 +478,7 @@ function restoreScrollPosition(route) {
 
 function requestScrollRestore(route, scrollTop = 0) {
   pendingScrollRestore = { route, scrollTop };
+  skipCaregiverTimelineAutoFocus = true;
 }
 
 function findActionElement(action, value) {
@@ -378,6 +539,8 @@ function restoreScrollSnapshot(snapshot) {
   const contentScroller = app.querySelector(".content-area");
   const directorPlanScroller = app.querySelector(".director-page--care-plans");
   const directorPlanFloorStrip = app.querySelector(".director-plan-floor-strip");
+  const caregiverTimeline =
+    app.querySelector("[data-caregiver-timeline-fullscreen-list]") || app.querySelector("[data-caregiver-timeline-list]");
   const reportTemplateDialog = app.querySelector(".director-report-template-modal__dialog");
   const reportTemplateSchedule = app.querySelector(".director-report-schedule-page__body");
 
@@ -393,6 +556,10 @@ function restoreScrollSnapshot(snapshot) {
     directorPlanFloorStrip.scrollLeft = normalized.directorPlanFloorStrip;
   }
 
+  if (caregiverTimeline) {
+    caregiverTimeline.scrollTop = normalized.caregiverTimeline;
+  }
+
   if (reportTemplateDialog) {
     reportTemplateDialog.scrollTop = normalized.reportTemplateDialog;
   }
@@ -402,6 +569,31 @@ function restoreScrollSnapshot(snapshot) {
   }
 
   restoreReportTemplateSectionState(normalized.reportTemplateSections);
+}
+
+function syncCaregiverTimelineFocus() {
+  if (state.session.identity !== "caregiver") return;
+  if (state.ui.route !== "elder-detail" && state.ui.route !== "task-detail") return;
+  if (skipCaregiverTimelineAutoFocus) {
+    skipCaregiverTimelineAutoFocus = false;
+    return;
+  }
+
+  const focusKey = `${state.ui.route}:${state.ui.selectedElderId}`;
+  if (focusKey === lastCaregiverTimelineFocusKey) return;
+  lastCaregiverTimelineFocusKey = focusKey;
+
+  const timeline = app.querySelector("[data-caregiver-timeline-list]");
+  const currentTask = timeline?.querySelector('[data-current-task="true"]');
+  if (!timeline || !currentTask) return;
+
+  const apply = () => {
+    const targetTop = Math.max(0, currentTask.offsetTop - timeline.offsetTop - 8);
+    timeline.scrollTop = targetTop;
+  };
+
+  window.requestAnimationFrame(apply);
+  window.setTimeout(apply, 80);
 }
 
 function renderDirectorPlanPreviewInPlace(scrollSnapshot) {
@@ -422,6 +614,30 @@ function renderDirectorPlanPreviewInPlace(scrollSnapshot) {
   window.requestAnimationFrame(() => restoreScrollSnapshot(scrollSnapshot));
   window.setTimeout(() => restoreScrollSnapshot(scrollSnapshot), 80);
   window.setTimeout(() => restoreScrollSnapshot(scrollSnapshot), 180);
+}
+
+function renderDirectorTemporarySearchResultsInPlace() {
+  const panel = app.querySelector(".director-temporary-search-results");
+  if (!panel) return;
+
+  const searchResults = selectors().directorDispatchElderPicker?.searchResults || [];
+  panel.replaceChildren();
+
+  if (!searchResults.length) {
+    const empty = document.createElement("span");
+    empty.textContent = "输入姓名后显示匹配老人";
+    panel.appendChild(empty);
+    return;
+  }
+
+  searchResults.forEach((elder) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.action = "select-director-temporary-elder";
+    button.dataset.value = elder.id;
+    button.textContent = `${elder.floor}F · ${elder.room}室 · ${elder.name}`;
+    panel.appendChild(button);
+  });
 }
 
 function buildNavigationSnapshot() {
@@ -490,6 +706,16 @@ function navigateBackByPageLayer() {
 
   if (state.ui.loginMenuOpen) {
     actions.closeLoginMenu();
+    return true;
+  }
+
+  if (state.ui.taskRecordDialog) {
+    actions.closeTaskRecordDialog();
+    return true;
+  }
+
+  if (state.ui.caregiverTimelineFullscreen) {
+    actions.closeCaregiverTimelineFullscreen();
     return true;
   }
 
@@ -657,12 +883,22 @@ function collectDirectorDispatchDraftForm() {
 
   return {
     ...draft,
+    mode: draft.mode || "",
     title: form.elements.title?.value || "",
     schedule: form.elements.schedule?.value || "",
+    floor: form.elements.floor?.value || draft.floor || "",
+    room: form.elements.room?.value || draft.room || "",
+    timeMode: form.elements.timeMode?.value || draft.timeMode || "now",
+    startTime: form.elements.startTime?.value || draft.startTime || "",
+    endTime: form.elements.endTime?.value || draft.endTime || "",
+    elderSearch: form.elements.elderSearch?.value || draft.elderSearch || "",
+    elderSearchOpen: Boolean(draft.elderSearchOpen),
     status: form.elements.status?.value || "pending",
     requirePhoto: (form.elements.recordType?.value || "text") === "photo",
+    elderId: form.elements.elderId?.value || draft.elderId || "",
     caregiverId: form.elements.caregiverId?.value || "",
-    note: form.elements.note?.value || "",
+    note: form.elements.description?.value || form.elements.note?.value || "",
+    description: form.elements.description?.value || form.elements.note?.value || "",
   };
 }
 
@@ -1182,6 +1418,36 @@ function runPendingDirectorCareRecordAction() {
   });
 }
 
+function collectTaskRecordDialogForm() {
+  return {
+    note: app.querySelector("[data-task-record-note]")?.value || "",
+  };
+}
+
+function captureTaskEvidence(target, file) {
+  if (!file) {
+    actions.setTaskEvidence(target, null);
+    return;
+  }
+
+  const evidence = {
+    name: file.name || "护理留痕照片",
+    dataUrl: "",
+    capturedAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+  };
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    actions.setTaskEvidence(target, { ...evidence, dataUrl: String(reader.result || "") });
+  };
+  reader.onerror = () => {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    actions.setTaskEvidence(target, evidence);
+  };
+  reader.readAsDataURL(file);
+}
+
 function renderApp() {
   rememberScrollPosition();
 
@@ -1196,16 +1462,20 @@ function renderApp() {
         </section>
         ${renderBottomNav()}
       </section>
+      ${renderTaskRecordDialog()}
       ${renderToast()}
     </main>
   `;
 
   restoreScrollPosition(state.ui.route);
   restoreAnchorPosition();
+  syncCaregiverTimelineFocus();
   syncBrowserHistory();
   runPendingDirectorCareRecordAction();
   syncDirectorCloudPolling();
   syncCaregiverTaskPolling();
+  syncInstitutionSharedStatePolling();
+  syncLiveClockTimer();
 }
 
 function handleClick(event) {
@@ -1250,15 +1520,69 @@ function handleClick(event) {
   if (action === "close-batch-panel") return actions.closeBatchPanel();
   if (action === "complete-batch") return actions.completeBatch(value);
   if (action === "open-batch-exception-review") return actions.openBatchExceptionReview();
+  if (action === "open-caregiver-timeline-fullscreen") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.openCaregiverTimelineFullscreen();
+  }
+  if (action === "close-caregiver-timeline-fullscreen") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.closeCaregiverTimelineFullscreen();
+  }
+  if (action === "focus-task") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.focusTask(value);
+  }
   if (action === "select-task") return actions.selectTask(value);
-  if (action === "complete-task") return actions.completeTask(value);
-  if (action === "mark-risk") return actions.markTaskException(value, "risk");
+  if (action === "complete-task") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.completeTask(value);
+  }
+  if (action === "open-task-record") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.openTaskRecordDialog(value);
+  }
+  if (action === "open-task-exception" || action === "mark-risk") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.openTaskExceptionDialog(value);
+  }
+  if (action === "open-quick-exception") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.openQuickExceptionDialog(value);
+  }
+  if (action === "preview-task-evidence") {
+    const taskNote = app.querySelector("[data-task-record-note]");
+    if (taskNote) {
+      actions.updateTaskRecordDialogNote(taskNote.value);
+    }
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.openTaskEvidencePreview(
+      {
+        taskId: trigger.dataset.evidenceTask || "",
+        elderId: trigger.dataset.evidenceElder || "",
+        kind: trigger.dataset.evidenceKind || "record",
+      },
+      trigger.dataset.evidenceIndex || "0",
+    );
+  }
+  if (action === "close-task-evidence-preview") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.closeTaskEvidencePreview();
+  }
+  if (action === "close-task-record-dialog") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.closeTaskRecordDialog();
+  }
+  if (action === "save-task-record-dialog") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.saveTaskRecordDialog(collectTaskRecordDialogForm());
+  }
   if (action === "mark-refused") return actions.markTaskException(value, "refused");
   if (action === "toggle-message") return actions.toggleMessageRead(value);
   if (action === "toggle-family-message") return actions.toggleFamilyMessage(value);
   if (action === "set-history-time") return actions.setHistoryTimeFilter(value);
   if (action === "select-history") return actions.selectHistory(value);
   if (action === "select-director-floor") return actions.selectDirectorFloor(value);
+  if (action === "select-director-stat-caregiver") return actions.selectDirectorStatisticsCaregiver(value);
   if (action === "open-director-caregiver") return actions.openDirectorCaregiver();
   if (action === "open-director-assignments") return actions.openDirectorAssignments();
   if (action === "open-director-care-records") return actions.openDirectorCareRecords(value);
@@ -1502,6 +1826,20 @@ function handleClick(event) {
   if (action === "set-director-template-filter") return actions.setDirectorTemplateFilter(value);
   if (action === "set-director-assignment-filter") return actions.setDirectorAssignmentFilter(value);
   if (action === "set-director-dispatch-filter") return actions.setDirectorDispatchFilter(value);
+  if (action === "open-director-temporary-task") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.openDirectorTemporaryTaskDraft();
+  }
+  if (action === "toggle-director-temporary-elder-search") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    actions.updateDirectorTemporaryTaskDraft(collectDirectorDispatchDraftForm());
+    return actions.toggleDirectorTemporaryTaskSearch();
+  }
+  if (action === "select-director-temporary-elder") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    actions.updateDirectorTemporaryTaskDraft(collectDirectorDispatchDraftForm());
+    return actions.selectDirectorTemporaryTaskElder(value);
+  }
   if (action === "open-director-dispatch-draft") {
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
     return actions.openDirectorDispatchDraft(value);
@@ -1545,6 +1883,14 @@ function handleClick(event) {
     return actions.selectDirectorPlanRoom(value);
   }
   if (action === "close-director-plan-timeline") return actions.closeDirectorPlanTimeline();
+  if (action === "open-director-plan-note-draft") return actions.openDirectorPlanNoteDraft(value);
+  if (action === "close-director-plan-note-draft") return actions.closeDirectorPlanNoteDraft();
+  if (action === "save-director-plan-note-draft") {
+    const noteInput = app.querySelector("[data-director-plan-note-input]");
+    return actions.saveDirectorPlanNoteDraft(noteInput?.value || "");
+  }
+  if (action === "open-director-plan-temporary-dialog") return actions.openDirectorPlanTemporaryDialog(value);
+  if (action === "close-director-plan-temporary-dialog") return actions.closeDirectorPlanTemporaryDialog();
   if (action === "assign-task") return actions.assignTask(value, caregiverId);
   if (action === "clear-task-assignment") return actions.clearTaskAssignment(value);
   if (["create-template", "open-template-draft"].includes(action)) {
@@ -1574,6 +1920,11 @@ function handleClick(event) {
 }
 
 function handleInput(event) {
+  if (event.target.matches("[data-task-record-note]")) {
+    actions.updateTaskRecordDialogNote(event.target.value);
+    return;
+  }
+
   if (event.target.closest("[data-daily-report-template-form]")) {
     persistDailyReportTemplateEditorState();
     return;
@@ -1589,6 +1940,17 @@ function handleInput(event) {
     return;
   }
 
+  if (event.target.matches("[data-director-temporary-elder-search]")) {
+    actions.updateDirectorTemporaryTaskDraft(collectDirectorDispatchDraftForm(), { silent: true });
+    renderDirectorTemporarySearchResultsInPlace();
+    return;
+  }
+
+  if (event.target.matches("[data-director-plan-note-input]")) {
+    actions.updateDirectorPlanNoteDraft(event.target.value);
+    return;
+  }
+
   if (event.target.matches("[data-director-resident-search]")) {
     actions.setDirectorResidentSearch(event.target.value);
   }
@@ -1601,8 +1963,20 @@ function handleChange(event) {
   }
 
   if (event.target.matches("[data-evidence-task]")) {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    const taskNote = app.querySelector("[data-task-record-note]");
+    if (taskNote) {
+      actions.updateTaskRecordDialogNote(taskNote.value);
+    }
     const file = event.target.files && event.target.files[0];
-    actions.setTaskEvidence(event.target.dataset.evidenceTask, file ? file.name : "");
+    captureTaskEvidence(
+      {
+        taskId: event.target.dataset.evidenceTask || "",
+        elderId: event.target.dataset.evidenceElder || "",
+        kind: event.target.dataset.evidenceKind || "record",
+      },
+      file,
+    );
     return;
   }
 
@@ -1616,6 +1990,17 @@ function handleChange(event) {
     return;
   }
 
+  if (
+    event.target.matches("[data-director-temporary-floor]") ||
+    event.target.matches("[data-director-temporary-room]") ||
+    event.target.matches("[data-director-temporary-elder]") ||
+    event.target.matches("[data-director-temporary-time-mode]")
+  ) {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    actions.updateDirectorTemporaryTaskDraft(collectDirectorDispatchDraftForm());
+    return;
+  }
+
   if (event.target.matches("[data-report-template-import-institution]")) {
     actions.setDailyReportTemplateImportInstitution(event.target.value);
   }
@@ -1624,6 +2009,22 @@ function handleChange(event) {
 document.addEventListener("click", handleClick);
 document.addEventListener("input", handleInput);
 document.addEventListener("change", handleChange);
+document.addEventListener("contextmenu", (event) => {
+  const preview = event.target.closest("[data-evidence-preview-task]");
+  if (!preview) return;
+
+  event.preventDefault();
+  const target = {
+    taskId: preview.dataset.evidencePreviewTask || "",
+    elderId: preview.dataset.evidencePreviewElder || "",
+    kind: preview.dataset.evidencePreviewKind || "record",
+    index: preview.dataset.evidencePreviewIndex || "0",
+  };
+  if (window.confirm("删除这张照片？")) {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    actions.deleteTaskEvidence(target);
+  }
+});
 document.addEventListener("pointerdown", handleReportTemplateSchedulePointerDown);
 document.addEventListener("pointermove", handleReportTemplateSchedulePointerMove);
 document.addEventListener("pointerup", handleReportTemplateSchedulePointerUp);
@@ -1707,6 +2108,59 @@ function syncCaregiverTaskPolling() {
   caregiverTaskPollTimer = window.setInterval(() => {
     actions.refreshCaregiverCloudTasks({ silent: true });
   }, 10000);
+}
+
+function isEditingTextInput() {
+  const active = document.activeElement;
+  if (!active) return false;
+  return Boolean(active.closest?.("input, textarea, select, [contenteditable='true']"));
+}
+
+function getLiveClockText() {
+  return new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function updateLiveClockNodes() {
+  document.querySelectorAll("[data-live-clock]").forEach((node) => {
+    node.textContent = getLiveClockText();
+  });
+}
+
+function syncLiveClockTimer() {
+  const hasClock = Boolean(document.querySelector("[data-live-clock]"));
+
+  if (!hasClock) {
+    window.clearInterval(liveClockTimer);
+    liveClockTimer = 0;
+    return;
+  }
+
+  updateLiveClockNodes();
+
+  if (liveClockTimer) return;
+
+  liveClockTimer = window.setInterval(updateLiveClockNodes, 1000);
+}
+
+function syncInstitutionSharedStatePolling() {
+  const shouldPoll =
+    state.session.loggedIn &&
+    (state.session.identity === "director" || state.session.identity === "caregiver") &&
+    !["login", "attendance"].includes(state.ui.route);
+
+  if (!shouldPoll) {
+    window.clearInterval(institutionStatePollTimer);
+    institutionStatePollTimer = 0;
+    return;
+  }
+
+  if (institutionStatePollTimer) return;
+
+  actions.refreshInstitutionSharedState({ silent: true });
+  institutionStatePollTimer = window.setInterval(() => {
+    if (isEditingTextInput()) return;
+    actions.refreshInstitutionSharedState({ silent: true });
+  }, 12000);
 }
 
 subscribe(renderApp);
