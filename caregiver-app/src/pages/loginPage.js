@@ -125,6 +125,7 @@ function renderUpdateDialog(state) {
 
 export function renderLoginPage({ state } = {}) {
   const runtimeInfo = readRuntimeInfo();
+  const errorMsg = state?.ui?.loginError || "";
 
   return `
     <section class="role-select-page">
@@ -142,40 +143,19 @@ export function renderLoginPage({ state } = {}) {
       </div>
 
       <div class="role-select-page__content">
-        <p class="role-select-page__hint">请选择您的身份进入系统</p>
-
-        <button class="role-card role-card--primary" data-action="enter-caregiver">
-          <span class="role-card__icon">${renderIcon("profile")}</span>
-          <span class="role-card__body">
-            <strong>我是护工</strong>
-            <small>日常护理、任务打卡、健康记录</small>
-          </span>
-          <span class="role-card__arrow">${renderIcon("caretRight")}</span>
-        </button>
-
-        <button class="developer-entry" data-action="dev-enter-caregiver">
-          <span>${renderIcon("fingerprint")}</span>
-          <strong>开发者进入护工端</strong>
-          <small>调试使用，跳过指纹与定位打卡</small>
-        </button>
-
-        <button class="role-card" data-action="enter-family">
-          <span class="role-card__icon role-card__icon--green">${renderIcon("users")}</span>
-          <span class="role-card__body">
-            <strong>我是家属</strong>
-            <small>健康日报、生活探视、消息查看</small>
-          </span>
-          <span class="role-card__arrow">${renderIcon("caretRight")}</span>
-        </button>
-
-        <button class="role-card" data-action="enter-director">
-          <span class="role-card__icon role-card__icon--red">${renderIcon("chart")}</span>
-          <span class="role-card__body">
-            <strong>我是院长</strong>
-            <small>全院总览、人员监管、运营统计</small>
-          </span>
-          <span class="role-card__arrow">${renderIcon("caretRight")}</span>
-        </button>
+        <form class="login-form" autocomplete="off">
+          <div class="login-form__field">
+            <label class="login-form__label">用户名</label>
+            <input type="text" class="login-form__input" name="username" placeholder="请输入用户名" autocomplete="off" />
+          </div>
+          <div class="login-form__field">
+            <label class="login-form__label">密码</label>
+            <input type="password" class="login-form__input" name="password" placeholder="请输入密码" autocomplete="off" />
+          </div>
+          ${errorMsg ? `<p class="login-form__error">${errorMsg}</p>` : ""}
+          <button type="button" class="button button--primary button--block login-form__submit" data-action="login-submit">登录</button>
+        </form>
+        <p class="login-form__footnote">联系院长申请账号</p>
       </div>
 
       <div class="role-select-page__footer">

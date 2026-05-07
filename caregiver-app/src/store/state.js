@@ -6,7 +6,6 @@
   createMockState,
   createReportTemplateItems,
 } from "../data/mockData.js";
-import { requestAttendanceClockIn } from "../utils/attendanceBridge.js";
 import {
   fetchCareRecords,
   fetchDailyReportTemplate,
@@ -14,8 +13,11 @@ import {
   fetchInstitutionState,
   fetchLatestAppRelease,
   fetchPublishedTasks,
+  getAuthToken,
   getCloudApiConfig,
   isCloudSyncConfigured,
+  requestJson,
+  setAuthToken,
   uploadCareRecord,
   uploadDailyReportTemplate,
   uploadInstitutionState,
@@ -41,7 +43,8 @@ const DEFAULT_REPORT_TEMPLATE_IMPORT_INSTITUTIONS = [
   { id: "zhuzhou-demo", name: "株洲示范养老院" },
 ];
 
-function notify() {
+export function notify() {
+  if (state._holdNotify) return;
   listeners.forEach((listener) => listener(state));
 }
 
@@ -348,7 +351,7 @@ function hydrateReportItems(record = {}, template = state.dailyReportTemplate) {
   };
 }
 
-function applyDailyReportTemplate(template = {}) {
+function applyDailyReportTemplate(template = {}, options = {}) {
   const nextTemplate = normalizeDailyReportTemplate(template);
   if (!nextTemplate.sections.length) return null;
 
@@ -362,7 +365,7 @@ function applyDailyReportTemplate(template = {}) {
     state.ui.directorCareRecordDraft.reportItems = hydrateReportItems(state.ui.directorCareRecordDraft, nextTemplate);
   }
 
-  rebuildTasks();
+  if (options.rebuild !== false) rebuildTasks();
   return nextTemplate;
 }
 
@@ -500,12 +503,15 @@ function mergeCloudCareRecord(record = {}) {
     state.dailyReports.unshift(normalized);
   }
 
-  state.cloud.careReports.sort((left, right) => String(right.updatedAt || "").localeCompare(String(left.updatedAt || "")));
+  state.cloud.careReports.sort((left, right) => {
+    const cmp = String(right.updatedAt || "").localeCompare(String(left.updatedAt || ""));
+    return cmp !== 0 ? cmp : (left.id || "").localeCompare(right.id || "");
+  });
 
   return cloneCareRecordDraft(normalized);
 }
 
-function serializeCloudTask(task = {}) {
+function serializeCloudTask(task = {}, sourceApp = task.sourceApp || "director-app") {
   const elder = getElderById(task.elderId);
   const caregiver = getCaregiverById(task.caregiverId);
   const defaultCaregiver = getCaregiverById(task.defaultCaregiverId);
@@ -524,7 +530,7 @@ function serializeCloudTask(task = {}) {
     caregiverName: caregiver?.name || "",
     defaultCaregiverName: defaultCaregiver?.name || "",
     workflowStatus: "published",
-    sourceApp: "director-app",
+    sourceApp,
     updatedAt: timestamp,
   };
 }
@@ -553,6 +559,11 @@ function normalizeCloudTask(task = {}) {
     assignmentMode: task.assignmentMode || "manual",
     assignmentStatus: task.assignmentStatus || "published",
     description: task.description || task.note || "",
+    exception: task.exception || task.exceptionNote || "",
+    exceptionNote: task.exceptionNote || task.exception || "",
+    exceptionType: task.exceptionType || "",
+    exceptionReportedAt: task.exceptionReportedAt || "",
+    exceptionEvidence: normalizeEvidenceList(task.exceptionEvidence || task.evidence || task.photos || []),
     publishedAt: task.publishedAt || task.updatedAt || "",
     acceptedAt: task.acceptedAt || task.publishedAt || task.updatedAt || "",
     planNote: task.planNote || "",
@@ -663,49 +674,62 @@ function applyInstitutionStateSnapshot(snapshot = {}) {
   const personnelInfo = data.personnelInfo || data.personnel_info || {};
   const institutionInfo = data.institutionInfo || data.institution_info || {};
   const taskInfo = data.taskInfo || data.task_info || {};
+  let structureChanged = false;
   let changed = false;
 
   if (Array.isArray(personnelInfo.caregivers)) {
-    state.caregivers = JSON.parse(JSON.stringify(personnelInfo.caregivers));
-    changed = true;
+    const sorted = [...personnelInfo.caregivers].sort((a, b) => (a.id || "").localeCompare(b.id || ""));
+    const prev = JSON.stringify([...state.caregivers].sort((a, b) => (a.id || "").localeCompare(b.id || "")));
+    state.caregivers = JSON.parse(JSON.stringify(sorted));
+    if (JSON.stringify(sorted) !== prev) structureChanged = true;
   }
   if (Array.isArray(personnelInfo.elders)) {
-    state.elders = JSON.parse(JSON.stringify(personnelInfo.elders));
-    changed = true;
+    const sorted = [...personnelInfo.elders].sort((a, b) => (a.id || "").localeCompare(b.id || ""));
+    const prev = JSON.stringify([...state.elders].sort((a, b) => (a.id || "").localeCompare(b.id || "")));
+    state.elders = JSON.parse(JSON.stringify(sorted));
+    if (JSON.stringify(sorted) !== prev) structureChanged = true;
   }
   if (institutionInfo.institution) {
-    state.institution = {
-      ...state.institution,
-      ...JSON.parse(JSON.stringify(institutionInfo.institution)),
-    };
-    changed = true;
+    const prevInst = JSON.stringify(state.institution);
+    state.institution = { ...state.institution, ...JSON.parse(JSON.stringify(institutionInfo.institution)) };
+    const nextInst = JSON.stringify(state.institution);
+    if (nextInst !== prevInst) {
+      structureChanged = true;
+    }
   }
   if (taskInfo.dailyReportTemplate?.sections?.length) {
-    applyDailyReportTemplate(taskInfo.dailyReportTemplate);
-    changed = true;
+    const prev = JSON.stringify(state.dailyReportTemplate);
+    applyDailyReportTemplate(taskInfo.dailyReportTemplate, { rebuild: false });
+    if (JSON.stringify(state.dailyReportTemplate) !== prev) structureChanged = true;
   }
   if (Array.isArray(taskInfo.elderCarePlans) && taskInfo.elderCarePlans.length) {
-    state.elderCarePlans = JSON.parse(JSON.stringify(taskInfo.elderCarePlans));
-    changed = true;
-  }
-  if (Array.isArray(taskInfo.dailyReports)) {
-    taskInfo.dailyReports.forEach((record) => mergeCloudCareRecord(record));
-    changed = true;
+    const hasPlanItems = taskInfo.elderCarePlans.some((plan) => Array.isArray(plan.items) && plan.items.length > 0);
+    if (hasPlanItems || !state.elderCarePlans.length) {
+      const sorted = [...taskInfo.elderCarePlans].sort((a, b) => (a.elderId || a.id || "").localeCompare(b.elderId || b.id || ""));
+      const prev = JSON.stringify([...state.elderCarePlans].sort((a, b) => (a.elderId || a.id || "").localeCompare(b.elderId || b.id || "")));
+      state.elderCarePlans = JSON.parse(JSON.stringify(sorted));
+      if (JSON.stringify(sorted) !== prev) structureChanged = true;
+    }
   }
 
-  if (changed) {
-    const currentCaregiver = state.caregivers.find((item) => item.id === state.caregiver?.id);
+  if (structureChanged) {
     if (currentCaregiver) {
       state.caregiver = { ...currentCaregiver };
     } else if (state.session.identity === "caregiver" && state.caregivers[0]) {
       state.caregiver = { ...state.caregivers[0] };
     }
     rebuildTasks();
+    changed = true;
+  }
+
+  if (Array.isArray(taskInfo.dailyReports)) {
+    taskInfo.dailyReports.forEach((record) => mergeCloudCareRecord(record));
   }
 
   if (Array.isArray(taskInfo.temporaryTasks)) {
-    taskInfo.temporaryTasks.forEach((task) => mergeCloudTask(task));
-    changed = taskInfo.temporaryTasks.length > 0 || changed;
+    taskInfo.temporaryTasks.forEach((task) => {
+      if (isTemporaryTask(task)) mergeCloudTask(task);
+    });
   }
 
   if (changed) {
@@ -928,6 +952,7 @@ async function downloadDirectorCareReports(filters = {}, options = {}) {
     elderId: filters.elderId || "",
     recordDate: filters.recordDate || "",
     caregiverId: filters.caregiverId || "",
+    institutionId: state.institution.id || "",
   });
   const nextItems = Array.isArray(response?.items) ? response.items.map((item) => normalizeCloudCareRecord(item)) : [];
 
@@ -935,6 +960,7 @@ async function downloadDirectorCareReports(filters = {}, options = {}) {
     state.cloud.careReports = [];
   }
 
+  const prevCount = state.cloud.careReports.length;
   nextItems.forEach((item) => {
     mergeCloudCareRecord(item);
   });
@@ -1071,7 +1097,10 @@ function resolvePlanDraftItem(planDraft, itemDraft) {
 }
 
 function sortTasksBySchedule(taskList) {
-  return [...taskList].sort((left, right) => left.schedule.localeCompare(right.schedule));
+  return [...taskList].sort((left, right) => {
+    const cmp = (left.schedule || "").localeCompare(right.schedule || "");
+    return cmp !== 0 ? cmp : (left.id || "").localeCompare(right.id || "");
+  });
 }
 
 function scheduleToMinutes(value = "") {
@@ -1112,6 +1141,31 @@ function taskEndMinutes(task = {}) {
   const match = windowText.match(/\d{1,2}:\d{2}\s*-\s*(\d{1,2}:\d{2})/);
   if (match) return scheduleToMinutes(match[1]);
   return scheduleToMinutes(task.schedule);
+}
+
+function getDirectorTimelineStatus(task = {}, selectedDate = formatNowDate()) {
+  if (task.status === "completed") {
+    return { label: "已完成", tone: "success" };
+  }
+
+  if (task.status === "risk") {
+    return { label: "异常", tone: "error" };
+  }
+
+  if (task.status === "refused") {
+    return { label: "不配合", tone: "error" };
+  }
+
+  const today = formatNowDate();
+  const isPastDate = selectedDate < today;
+  const isToday = selectedDate === today || selectedDate === state.director.date;
+  const isOverdue = isPastDate || (isToday && taskEndMinutes(task) < currentClockMinutes());
+
+  if (isOverdue) {
+    return { label: "超时", tone: "overdue" };
+  }
+
+  return { label: "未完成", tone: "muted" };
 }
 
 function pickCurrentTask(taskList = []) {
@@ -1485,6 +1539,24 @@ async function publishReportTemplateGeneratedTasks() {
   return { ok, failed, skipped: 0 };
 }
 
+async function syncCaregiverTaskToCloud(task, failureMessage = "任务云端同步失败") {
+  if (!task || !isCloudSyncConfigured()) return false;
+
+  try {
+    const response = await uploadPublishedTask(serializeCloudTask(task, "caregiver-app"));
+    const cloudTask = response?.item || response?.task || serializeCloudTask(task, "caregiver-app");
+    mergeCloudTask(cloudTask);
+    setCloudTasksFetchedAt(response?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`);
+    setCloudTasksError("");
+    refreshDirectorOverview();
+    ensureCurrentSelections();
+    return true;
+  } catch (error) {
+    setCloudTasksError(error?.message || failureMessage);
+    return false;
+  }
+}
+
 function appendHistoryRecord(task, status, details, exception = "") {
   const elder = getElderById(task.elderId);
   if (!elder) return;
@@ -1748,13 +1820,29 @@ function buildDirectorFloorCaregiverProgress(floor, tasks = state.tasks) {
     });
 }
 
-function buildDirectorExceptionReports(tasks = state.tasks) {
+function buildDirectorExceptionReports(tasks = state.tasks, opts = {}) {
   const saved = state.ui.taskExceptionSaved || {};
   const notes = state.ui.taskExceptionNotes || {};
   const evidence = state.ui.taskExceptionEvidence || {};
+  const readIds = new Set(state.ui.directorReadExceptionIds || []);
 
   return sortTasksBySchedule(tasks)
-    .filter((task) => task.status === "risk" || task.status === "refused" || saved[task.id] || notes[task.id] || evidence[task.id])
+    .filter(
+      (task) => {
+        const isException =
+          task.status === "risk" ||
+          task.status === "refused" ||
+          saved[task.id] ||
+          notes[task.id] ||
+          evidence[task.id] ||
+          task.exception ||
+          task.exceptionNote ||
+          normalizeEvidenceList(task.exceptionEvidence).length > 0;
+        if (!isException) return false;
+        if (opts.readOnly) return readIds.has(task.id);
+        return !readIds.has(task.id);
+      },
+    )
     .map((task) => {
       const enriched = enrichTask(task);
       return {
@@ -1768,8 +1856,9 @@ function buildDirectorExceptionReports(tasks = state.tasks) {
         room: enriched.elder?.room || "--",
         floor: enriched.elder?.floor || "--",
         caregiverName: enriched.caregiver?.name || "未分配护工",
-        note: notes[task.id] || task.exception || task.note || "未填写文字说明",
-        evidence: normalizeEvidenceList(evidence[task.id]).slice(0, 6),
+        note: notes[task.id] || task.exceptionNote || task.exception || task.note || "未填写文字说明",
+        evidence: normalizeEvidenceList(evidence[task.id] || task.exceptionEvidence || task.evidence || task.photos || []).slice(0, 6),
+        reportedAt: task.exceptionReportedAt || "",
       };
     });
 }
@@ -1786,6 +1875,9 @@ export const actions = {
   },
   closeLoginMenu() {
     state.ui.loginMenuOpen = false;
+    notify();
+  },
+  tickClock() {
     notify();
   },
   openAppInfoDialog(kind = "about") {
@@ -1981,12 +2073,69 @@ export const actions = {
     state.ui.route = "director-home";
     state.ui.activeTab = "director-home";
     notify();
-    actions.refreshInstitutionSharedState({ silent: true });
-    actions.refreshDailyReportTemplate({ silent: true });
-    actions.refreshDirectorCloudReports({ silent: true });
+    actions.loadDirectorInitialData();
   },
-  login() {
-    actions.enterCaregiver();
+  async loadDirectorInitialData() {
+    state._holdNotify = true;
+    try {
+      state.ui.syncPhase = "正在同步日报模板与人员数据...";
+      const el = document.getElementById("sync-status");
+      if (el) el.textContent = state.ui.syncPhase;
+
+      await Promise.all([
+        actions.refreshDailyReportTemplate({ silent: true }),
+        actions.refreshInstitutionSharedState({ silent: true }),
+      ]);
+      if (state.cloud.institutionStateFetchedAt) {
+        state.ui.syncPhase = "正在同步护理任务...";
+        if (el) el.textContent = state.ui.syncPhase;
+        await actions.refreshDirectorCloudTasks({ silent: true });
+      }
+    } finally {
+      state._holdNotify = false;
+      notify();
+      state.ui.syncPhase = "";
+    }
+  },
+  async login(institutionId, username, password) {
+    const result = await requestJson("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ institutionId, username, password }),
+    });
+    if (!result || result.status !== "success") {
+      throw new Error((result && result.detail) || "登录失败");
+    }
+    setAuthToken(result.token);
+    state.session.token = result.token;
+    state.session.user = result.user;
+    state.session.identity = result.user.role;
+    state.session.loggedIn = true;
+    state.ui.loginMenuOpen = false;
+    state.ui.appInfoDialog = "";
+    state.ui.appUpdate.open = false;
+
+    const role = result.user.role;
+    if (role === "caregiver") {
+      state.ui.route = "attendance";
+      state.ui.activeTab = "home";
+      notify();
+      actions.refreshInstitutionSharedState({ silent: true });
+    } else if (role === "family") {
+      state.ui.route = "family-home";
+      state.ui.activeTab = "family-home";
+      notify();
+    } else if (role === "director") {
+      state.ui.route = "director-home";
+      state.ui.activeTab = "director-home";
+      notify();
+      actions.loadDirectorInitialData();
+    } else if (role === "admin" || role === "superadmin") {
+      state.ui.route = "director-home";
+      state.ui.activeTab = "director-home";
+      notify();
+      touchToast("管理员登录成功");
+      actions.loadDirectorInitialData();
+    }
   },
   clockIn() {
     state.session.loggedIn = true;
@@ -1996,7 +2145,11 @@ export const actions = {
     touchToast(`上班打卡成功 ${state.session.clockInAt}`);
     actions.refreshInstitutionSharedState({ silent: true });
   },
-  logout() {
+  async logout() {
+    try { await requestJson("/api/auth/logout", { method: "POST" }); } catch (_) {}
+    setAuthToken("");
+    state.session.token = "";
+    state.session.user = null;
     state.session.identity = "";
     state.session.loggedIn = false;
     state.session.clockInAt = "";
@@ -2174,6 +2327,24 @@ export const actions = {
           },
     );
     state.ui[storeKey][key] = [...currentList, nextEvidence].slice(0, 6);
+    if (kind === "exception") {
+      const task = getTaskById(key);
+      if (task) {
+        task.exceptionEvidence = normalizeEvidenceList(state.ui[storeKey][key]);
+        if (task.status === "risk" || task.status === "refused" || task.exception || task.exceptionNote) {
+          syncCaregiverTaskToCloud(task, "异常照片云端同步失败").catch(() => {});
+        }
+      }
+    }
+    if (kind === "quick") {
+      const quickTask = state.tasks.find(
+        (t) => t.elderId === key && t.source === "quick-exception" && t.status === "risk",
+      );
+      if (quickTask) {
+        quickTask.exceptionEvidence = normalizeEvidenceList(state.ui[storeKey][key]);
+        syncCaregiverTaskToCloud(quickTask, "快速异常照片云端同步失败").catch(() => {});
+      }
+    }
     touchToast(kind === "exception" || kind === "quick" ? "异常照片已保存" : "照片已保存到记录");
   },
   deleteTaskEvidence(target) {
@@ -2197,6 +2368,15 @@ export const actions = {
     }
     if (state.ui.taskRecordDialog) {
       state.ui.taskRecordDialog.previewIndex = null;
+    }
+    if (kind === "exception") {
+      const task = getTaskById(key);
+      if (task) {
+        task.exceptionEvidence = normalizeEvidenceList(state.ui[storeKey]?.[key]);
+        if (task.status === "risk" || task.status === "refused" || task.exception || task.exceptionNote) {
+          syncCaregiverTaskToCloud(task, "异常照片云端同步失败").catch(() => {});
+        }
+      }
     }
     touchToast("照片已删除");
   },
@@ -2236,7 +2416,7 @@ export const actions = {
     state.ui.taskRecordDialog = {
       taskId,
       type: "exception",
-      note: state.ui.taskExceptionNotes?.[taskId] || "",
+      note: state.ui.taskExceptionNotes?.[taskId] || task.exceptionNote || task.exception || "",
     };
     notify();
   },
@@ -2258,7 +2438,7 @@ export const actions = {
     state.ui.taskRecordDialog = null;
     notify();
   },
-  saveTaskRecordDialog(payload = {}) {
+  async saveTaskRecordDialog(payload = {}) {
     const dialog = state.ui.taskRecordDialog;
     if (!dialog) return;
 
@@ -2277,9 +2457,35 @@ export const actions = {
         addQuickAnomaly(elder, note || `${elder.name}出现异常，已快速上报。`);
         appendQuickExceptionHistory(elder, note || "快速异常上报已留痕。");
         state.ui.quickExceptionSaved[elder.id] = true;
+        const quickTaskId = `quick-exception-${Date.now()}`;
+        const quickEvidence = normalizeEvidenceList(state.ui.quickExceptionEvidence?.[elder.id]);
+        const quickTask = {
+          id: quickTaskId,
+          planItemId: quickTaskId,
+          elderId: elder.id,
+          caregiverId: state.caregiver.id,
+          title: `快速异常：${elder.name}`,
+          schedule: formatNowTime(),
+          window: formatNowTime(),
+          status: "risk",
+          source: "quick-exception",
+          assignmentMode: "temporary",
+          exception: note || `${elder.name}出现异常，已快速上报。`,
+          exceptionNote: note || `${elder.name}出现异常，已快速上报。`,
+          exceptionType: "快速异常上报",
+          exceptionReportedAt: `${formatNowDate()} ${formatNowTime()}`,
+          exceptionEvidence: quickEvidence,
+          requirePhoto: false,
+          templateId: "",
+          publishedAt: `${formatNowDate()} ${formatNowTime()}`,
+        };
+        state.tasks.push(quickTask);
+        refreshDirectorOverview();
+        syncCaregiverTaskToCloud(quickTask, "快速异常云端同步失败").catch(() => {});
       }
       state.ui.taskRecordDialog = null;
-      touchToast("快速异常已保存");
+      notify();
+      touchToast("快速异常已同步院长端");
       return;
     }
 
@@ -2300,7 +2506,13 @@ export const actions = {
     state.ui.taskExceptionSaved = state.ui.taskExceptionSaved || {};
     if (dialog.type === "exception") {
       state.ui.taskExceptionNotes[task.id] = note;
+      const exceptionEvidence = normalizeEvidenceList(state.ui.taskExceptionEvidence?.[task.id]);
       task.status = "risk";
+      task.exception = note || "异常情况已记录。";
+      task.exceptionNote = task.exception;
+      task.exceptionType = "异常情况";
+      task.exceptionReportedAt = `${formatNowDate()} ${formatNowTime()}`;
+      task.exceptionEvidence = exceptionEvidence;
       if (!state.ui.taskExceptionSaved[task.id]) {
         addAnomaly(task, "异常情况", note || `${task.title}执行中发现异常，已同步上报。`);
         appendHistoryRecord(task, "异常", note || "护理过程中发现异常情况，已同步上报。", "异常情况已记录。");
@@ -2308,11 +2520,15 @@ export const actions = {
       }
       refreshDirectorOverview();
       state.ui.taskRecordDialog = null;
-      touchToast("异常记录已保存");
+      notify();
+      const synced = await syncCaregiverTaskToCloud(task, "异常任务云端同步失败");
+      touchToast(synced ? "异常已同步院长端" : "异常已本机保存，云端同步失败");
       return;
     }
 
     state.ui.taskRecordNotes[task.id] = note;
+    task.recordNote = note;
+    task.recordUpdatedAt = `${formatNowDate()} ${formatNowTime()}`;
     appendHistoryRecord(task, "记录", note || `${task.title}已补充文字记录。`);
     state.ui.taskRecordDialog = null;
     touchToast("记录已保存");
@@ -2327,6 +2543,7 @@ export const actions = {
     if (task.status === "completed") {
       task.status = "pending";
       refreshDirectorOverview();
+      syncCaregiverTaskToCloud(task, "任务取消打卡云端同步失败").catch(() => {});
       touchToast("已取消打卡");
       return;
     }
@@ -2337,8 +2554,12 @@ export const actions = {
     }
 
     task.status = "completed";
+    task.completedAt = `${formatNowDate()} ${formatNowTime()}`;
+    task.recordNote = state.ui.taskRecordNotes?.[taskId] || state.ui.taskNotes?.[taskId] || "";
+    task.recordEvidence = recordEvidence;
     appendHistoryRecord(task, "已完成", state.ui.taskRecordNotes?.[taskId] || state.ui.taskNotes?.[taskId] || `${task.title}已完成，并已留痕记录。`);
     refreshDirectorOverview();
+    syncCaregiverTaskToCloud(task, "任务完成状态云端同步失败").catch(() => {});
     touchToast("打卡记录成功");
   },
   openCaregiverTimelineFullscreen() {
@@ -2362,17 +2583,28 @@ export const actions = {
     }
     if (type === "refused") {
       task.status = "refused";
+      task.exception = "老人情绪波动，暂时拒绝配合护理。";
+      task.exceptionNote = task.exception;
+      task.exceptionType = "老人不配合";
+      task.exceptionReportedAt = `${formatNowDate()} ${formatNowTime()}`;
+      task.exceptionEvidence = normalizeEvidenceList(state.ui.taskExceptionEvidence?.[task.id]);
       addAnomaly(task, "老人不配合", `${task.title}执行时老人拒绝配合，建议稍后再次处理。`);
       appendHistoryRecord(task, "老人不配合", "老人情绪波动，暂时拒绝配合护理。", "已记录老人不配合原因。");
       touchToast("已记录不配合原因");
     } else {
       task.status = "risk";
+      task.exception = `${task.title}执行中发现老人状态异常，已同步上报。`;
+      task.exceptionNote = task.exception;
+      task.exceptionType = "身体不适";
+      task.exceptionReportedAt = `${formatNowDate()} ${formatNowTime()}`;
+      task.exceptionEvidence = normalizeEvidenceList(state.ui.taskExceptionEvidence?.[task.id]);
       addAnomaly(task, "身体不适", `${task.title}执行中发现老人状态异常，已同步上报。`);
       appendHistoryRecord(task, "异常", "护理过程中发现异常情况，已同步上报。", "异常情况已上报，等待后续处理。");
       touchToast("异常上报成功，请补充留痕");
     }
 
     refreshDirectorOverview();
+    syncCaregiverTaskToCloud(task, "异常任务云端同步失败").catch(() => {});
     notify();
   },
   toggleMessageRead(id) {
@@ -2484,6 +2716,7 @@ export const actions = {
     state.ui.directorPersonnelDraft = null;
     notify();
     await actions.persistInstitutionSharedState({ silent: true });
+    publishReportTemplateGeneratedTasks().catch(() => {});
   },
   addCaregiver(input = {}) {
     const name = String(input.name || "").trim();
@@ -2552,6 +2785,7 @@ export const actions = {
     rebuildTasks();
     touchToast(`已删除护工 ${caregiver.name}`);
     actions.persistInstitutionSharedState({ silent: true });
+    publishReportTemplateGeneratedTasks().catch(() => {});
   },
   addElder(input = {}) {
     const name = String(input.name || "").trim();
@@ -2688,6 +2922,7 @@ export const actions = {
     rebuildTasks();
     touchToast(`已删除老人 ${elder.name}`);
     actions.persistInstitutionSharedState({ silent: true });
+    publishReportTemplateGeneratedTasks().catch(() => {});
   },
   openDirectorPersonnelPlanDetail(elderId = "") {
     if (!getElderById(elderId)) return;
@@ -2697,6 +2932,76 @@ export const actions = {
   closeDirectorPersonnelPlanDetail() {
     state.ui.directorPersonnelPlanDetailElderId = "";
     notify();
+  },
+  markExceptionRead(taskId) {
+    if (!taskId) return;
+    if (!state.ui.directorReadExceptionIds) state.ui.directorReadExceptionIds = [];
+    if (!state.ui.directorReadExceptionIds.includes(taskId)) {
+      state.ui.directorReadExceptionIds.push(taskId);
+    }
+    touchToast("已标记为已读");
+  },
+  restoreReadException(taskId) {
+    if (!taskId) return;
+    state.ui.directorReadExceptionIds = (state.ui.directorReadExceptionIds || []).filter((id) => id !== taskId);
+    touchToast("已恢复为未读");
+  },
+  deleteReadException(taskId) {
+    if (!taskId) return;
+    const task = getTaskById(taskId);
+    if (task) {
+      if (task.status === "risk" || task.status === "refused") task.status = "pending";
+      task.exceptionNote = "";
+      task.exception = "";
+      task.exceptionType = "";
+      task.exceptionEvidence = [];
+      task.exceptionReportedAt = "";
+    }
+    const saved = state.ui.taskExceptionSaved || {};
+    if (saved[taskId]) delete saved[taskId];
+    const notes = state.ui.taskExceptionNotes || {};
+    if (notes[taskId]) delete notes[taskId];
+    const evidence = state.ui.taskExceptionEvidence || {};
+    if (evidence[taskId]) delete evidence[taskId];
+    state.ui.directorReadExceptionIds = (state.ui.directorReadExceptionIds || []).filter((id) => id !== taskId);
+    touchToast("已删除");
+    if (task && isCloudSyncConfigured()) {
+      uploadPublishedTask(serializeCloudTask(task, "director-app")).catch(() => {});
+    }
+  },
+  deleteAllReadExceptions() {
+    const readIds = (state.ui.directorReadExceptionIds || []).slice();
+    if (!readIds.length) {
+      touchToast("没有已读记录");
+      return;
+    }
+    if (!window.confirm(`确认删除全部 ${readIds.length} 条已读记录？`)) return;
+    const saved = state.ui.taskExceptionSaved || {};
+    const notes = state.ui.taskExceptionNotes || {};
+    const evidence = state.ui.taskExceptionEvidence || {};
+    const tasksToUpload = [];
+    for (const id of readIds) {
+      const task = getTaskById(id);
+      if (task) {
+        if (task.status === "risk" || task.status === "refused") task.status = "pending";
+        task.exceptionNote = "";
+        task.exception = "";
+        task.exceptionType = "";
+        task.exceptionEvidence = [];
+        task.exceptionReportedAt = "";
+        tasksToUpload.push(task);
+      }
+      if (saved[id]) delete saved[id];
+      if (notes[id]) delete notes[id];
+      if (evidence[id]) delete evidence[id];
+    }
+    state.ui.directorReadExceptionIds = [];
+    touchToast(`已删除 ${readIds.length} 条记录`);
+    if (tasksToUpload.length && isCloudSyncConfigured()) {
+      tasksToUpload.forEach((task) => {
+        uploadPublishedTask(serializeCloudTask(task, "director-app")).catch(() => {});
+      });
+    }
   },
   openDailyReportTemplateEditor() {
     state.ui.directorReportTemplateDraft = createDailyReportTemplateDraft(state.dailyReportTemplate);
@@ -3575,6 +3880,7 @@ export const actions = {
     }
     if (!options.silent) notify();
 
+    const prevSnapshot = JSON.stringify(state.cloud.careReports);
     try {
       await downloadDirectorCareReports(
         {
@@ -3583,13 +3889,13 @@ export const actions = {
           recordDate: options.recordDate || "",
           caregiverId: options.caregiverId || "",
         },
-        { clear: true },
+        { clear: false },
       );
     } catch (error) {
       setCloudCareReportsError(error?.message || "拉取云端交班日报失败");
     } finally {
       setCloudCareReportsLoading(false);
-      notify();
+      if (JSON.stringify(state.cloud.careReports) !== prevSnapshot) notify();
     }
   },
   async loadLatestDirectorCareRecord(elderId, recordDate = "", options = {}) {
@@ -3643,11 +3949,12 @@ export const actions = {
   },
   async refreshCaregiverCloudTasks(options = {}) {
     if (state.session.identity !== "caregiver" || !state.caregiver?.id) return;
+    // updatedAt excluded — changes on every fetch, would break signature no-op
     const buildTaskSignature = () =>
       JSON.stringify(
         state.tasks
           .filter((task) => task.caregiverId === state.caregiver.id)
-          .map((task) => [task.id, task.elderId, task.caregiverId, task.status, task.updatedAt, task.publishedAt]),
+          .map((task) => [task.id, task.elderId, task.caregiverId, task.status, task.publishedAt]),
       );
     let shouldNotify = !options.silent;
     const beforeSignature = buildTaskSignature();
@@ -3700,6 +4007,58 @@ export const actions = {
       if (shouldNotify) {
         notify();
       }
+    }
+  },
+  async refreshDirectorCloudTasks(options = {}) {
+    if (state.session.identity !== "director" && state.session.identity !== "admin" && state.session.identity !== "superadmin") return;
+
+    if (!isCloudSyncConfigured()) return;
+
+    if (!state.cloud.institutionStateFetchedAt) return;
+
+    // updatedAt excluded — changes on every fetch, would break signature no-op
+    const buildTaskSignature = () =>
+      state.tasks.map((task) => [task.id, task.status, task.exceptionNote, task.exception, (task.exceptionEvidence || []).length]);
+
+    const signToString = (sig) => JSON.stringify(sig);
+
+    let shouldNotify = !options.silent;
+    const beforeSignature = buildTaskSignature();
+
+    try {
+      const response = await fetchPublishedTasks({
+        institutionId: state.institution.id,
+        limit: options.limit || 200,
+      });
+      const nextItems = Array.isArray(response?.items)
+        ? response.items
+        : Array.isArray(response?.tasks)
+          ? response.tasks
+          : Array.isArray(response)
+            ? response
+            : [];
+
+      nextItems.forEach((item) => {
+        if (!shouldAcceptCloudTask(item)) return;
+        mergeCloudTask(item);
+      });
+
+      setCloudTasksFetchedAt(response?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`);
+      setCloudTasksError("");
+
+      const afterSignature = buildTaskSignature();
+      if (signToString(beforeSignature) !== signToString(afterSignature)) {
+        refreshDirectorOverview();
+        ensureCurrentSelections();
+        if (!options.silent) {
+          touchToast("云端任务已刷新");
+        }
+        shouldNotify = true;
+      }
+    } catch (error) {
+      setCloudTasksError(error?.message || "拉取云端任务失败");
+    } finally {
+      if (shouldNotify) notify();
     }
   },
   restoreNavigationSnapshot(snapshot = {}) {
@@ -4168,62 +4527,25 @@ actions.devEnterCaregiver = function devEnterCaregiver() {
   touchToast("已通过开发者入口进入护工端");
 };
 
-actions.clockIn = async function clockIn() {
-  if (["fingerprint", "location"].includes(state.ui.attendanceVerification?.status)) {
-    return;
-  }
+actions.clockIn = function clockIn() {
+  if (state.session.loggedIn && state.session.clockInAt) return;
 
+  state.session.loggedIn = true;
+  state.session.clockInAt = formatNowTime();
+  state.session.clockOutAt = "";
+  state.session.clockInLocation = "院内打卡";
+  state.session.clockInLocationRaw = null;
   state.ui.attendanceVerification = createAttendanceVerificationState({
-    status: "fingerprint",
-    fingerprintStatus: "processing",
+    status: "success",
+    fingerprintStatus: "success",
+    locationStatus: "success",
+    locationLabel: "院内打卡",
   });
-  notify();
-
-  try {
-    const result = await requestAttendanceClockIn({
-      onProgress(progress = {}) {
-        if (progress.stage !== "location") return;
-
-        state.ui.attendanceVerification = {
-          ...state.ui.attendanceVerification,
-          status: "location",
-          fingerprintStatus: "success",
-          locationStatus: "processing",
-          errorStage: "",
-          errorMessage: "",
-        };
-        notify();
-      },
-    });
-
-    const location = normalizeClockInLocation(result.location);
-    state.session.loggedIn = true;
-    state.session.clockInAt = formatNowTime();
-    state.session.clockOutAt = "";
-    state.session.clockInLocation = formatClockInLocation(location) || "院内定位已记录";
-    state.session.clockInLocationRaw = location;
-    state.ui.attendanceVerification = createAttendanceVerificationState({
-      status: "success",
-      fingerprintStatus: "success",
-      locationStatus: "success",
-      locationLabel: state.session.clockInLocation,
-      locationAccuracy: formatClockInAccuracy(location),
-    });
-    syncCurrentCaregiverStatus("on-duty");
-    touchToast(`上班打卡成功 ${state.session.clockInAt}`);
-  } catch (error) {
-    const stage = error?.stage === "location" ? "location" : "fingerprint";
-    const errorMessage = error?.message || (stage === "location" ? "定位获取失败，请重试" : "指纹验证失败，请重试");
-
-    state.ui.attendanceVerification = createAttendanceVerificationState({
-      status: "error",
-      fingerprintStatus: stage === "location" ? "success" : "error",
-      locationStatus: stage === "location" ? "error" : "idle",
-      errorStage: stage,
-      errorMessage,
-    });
-    touchToast(errorMessage);
-  }
+  syncCurrentCaregiverStatus("on-duty");
+  state.ui.route = "home";
+  state.ui.activeTab = "home";
+  touchToast("上班打卡成功 " + state.session.clockInAt);
+  actions.refreshInstitutionSharedState({ silent: true });
 };
 
 actions.enterWorkbench = function enterWorkbench() {
@@ -4471,30 +4793,24 @@ export function selectors() {
     : [];
   const fallbackDirectorTimeline =
     state.director.timelines.find((item) => item.elderName === state.ui.selectedDirectorElder) || state.director.timelines[0];
+  const directorTimelineDate = state.ui.directorAuditDate || state.director.date || formatNowDate();
   const directorSelectedTimeline = selectedDirectorElder
     ? {
         elderName: selectedDirectorElder.name,
         room: `${selectedDirectorElder.room}室`,
         level: selectedDirectorElder.level,
-        date: state.ui.directorAuditDate || state.director.date || formatNowDate(),
+        date: directorTimelineDate,
         entries: selectedDirectorElderTasks.length
           ? selectedDirectorElderTasks.map((task) => {
               const enriched = enrichTask(task);
-              const statusLabel =
-                task.status === "risk"
-                  ? "异常留痕"
-                  : task.status === "refused"
-                    ? "不配合留痕"
-                    : task.status === "completed"
-                      ? "已完成"
-                      : task.caregiverId
-                        ? "进行中"
-                        : "待分配";
+              const timelineStatus = getDirectorTimelineStatus(task, directorTimelineDate);
               return {
                 time: task.schedule,
                 title: task.title,
-                note: `${enriched.sourceLabel} · ${statusLabel}${enriched.caregiver?.name ? ` · ${enriched.caregiver.name}` : ""}`,
-                tone: task.status === "risk" || task.status === "refused" ? "error" : task.status === "completed" ? "success" : "warning",
+                statusLabel: timelineStatus.label,
+                statusTone: timelineStatus.tone,
+                note: `${enriched.sourceLabel}${enriched.caregiver?.name ? ` · ${enriched.caregiver.name}` : ""}`,
+                tone: timelineStatus.tone,
               };
             })
           : fallbackDirectorTimeline?.entries || [],
@@ -4570,6 +4886,7 @@ export function selectors() {
   const selectedDirectorCaregiverStat =
     directorCaregiverStatistics.find((item) => item.id === state.ui.selectedDirectorStatisticsCaregiverId) || null;
   const directorExceptionReports = buildDirectorExceptionReports(state.tasks);
+  const directorReadExceptionReports = buildDirectorExceptionReports(state.tasks, { readOnly: true });
 
   const dispatchTasks = allDirectorTasks
     .filter((task) => task.assignmentMode === "manual" || task.assignmentMode === "temporary" || task.templateGroup === "special" || task.templateGroup === "temporary")
@@ -4988,6 +5305,7 @@ export function selectors() {
     directorCaregiverStatistics,
     selectedDirectorCaregiverStat,
     directorExceptionReports,
+    directorReadExceptionReports,
     cloudStatus,
     dailyReportTemplate: state.dailyReportTemplate,
     dailyReportTemplateOptions,

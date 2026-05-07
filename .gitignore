@@ -22,6 +22,10 @@ dist/
 build/
 .cache/
 
+# Local Claude Code personal overrides
+.claude/settings.local.json
+.claude/server-credentials.md
+
 # Local editor and agent scratch state
 .idea/
 .vscode/

@@ -54,17 +54,44 @@ export function isCloudSyncConfigured() {
   return Boolean(config.baseUrl && config.apiKey);
 }
 
+let _authToken = "";
+
+export function setAuthToken(token) {
+  _authToken = token || "";
+  try {
+    if (token) {
+      window.localStorage.setItem("elderSessionToken", token);
+    } else {
+      window.localStorage.removeItem("elderSessionToken");
+    }
+  } catch (_) {}
+}
+
+export function getAuthToken() {
+  if (_authToken) return _authToken;
+  try {
+    _authToken = window.localStorage.getItem("elderSessionToken") || "";
+  } catch (_) {
+    _authToken = "";
+  }
+  return _authToken;
+}
+
 function buildHeaders(extraHeaders = {}) {
   const { apiKey } = getCloudApiConfig();
-
-  return {
+  const headers = {
     "Content-Type": "application/json",
     "x-api-key": apiKey,
     ...extraHeaders,
   };
+  const token = getAuthToken();
+  if (token) {
+    headers["Authorization"] = "Bearer " + token;
+  }
+  return headers;
 }
 
-async function requestJson(path, init = {}) {
+export async function requestJson(path, init = {}) {
   const { baseUrl } = getCloudApiConfig();
   if (!baseUrl) {
     throw new Error("云端地址未配置");

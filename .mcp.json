@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "fetch": {
+      "type": "stdio",
+      "command": "C:\\Users\\14110\\AppData\\Local\\Microsoft\\WinGet\\Packages\\astral-sh.uv_Microsoft.Winget.Source_8wekyb3d8bbwe\\uvx.exe",
+      "args": [
+        "mcp-server-fetch"
+      ]
+    },
+    "blender": {
+      "type": "stdio",
+      "command": "C:\\Users\\14110\\AppData\\Local\\Microsoft\\WinGet\\Packages\\astral-sh.uv_Microsoft.Winget.Source_8wekyb3d8bbwe\\uvx.exe",
+      "args": [
+        "blender-mcp"
+      ]
+    },
+    "siliconflow-vision": {
+      "type": "stdio",
+      "command": "C:\\Users\\14110\\AppData\\Local\\Microsoft\\WinGet\\Packages\\astral-sh.uv_Microsoft.Winget.Source_8wekyb3d8bbwe\\uvx.exe",
+      "args": [
+        "--from",
+        "mcp",
+        "python",
+        "C:\\Users\\14110\\Desktop\\elder_serve\\.claude\\siliconflow_vision_mcp.py"
+      ]
+    }
+  }
+}

@@ -29,9 +29,6 @@ export function renderRoomSelectPage({ state, selectors }) {
                       </span>
                       <span class="room-row__arrow">${renderIcon("caretRight")}</span>
                     </button>
-                    <button class="button button--secondary button--small room-row__report" data-action="open-daily-report" data-value="${room.elderId}">
-                      日报提交
-                    </button>
                   </article>
                 `,
               )

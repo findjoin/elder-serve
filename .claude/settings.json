@@ -1,0 +1,51 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl:*)",
+      "Bash(git:*)",
+      "Bash(adb:*)",
+      "Bash(emulator:*)",
+      "Bash(./gradlew:*)",
+      "Bash(gradlew:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(python:*)",
+      "Bash(pip:*)",
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+      "Bash(grep:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(rm:*)",
+      "Bash(cd:*)",
+      "Bash(diff:*)",
+      "Bash(find:*)",
+      "Bash(echo:*)",
+      "Read(*)",
+      "Edit(*)",
+      "Write(*)",
+      "Glob(*)",
+      "Grep(*)",
+      "Skill(update-config)",
+      "Skill(update-config:*)"
+    ],
+    "deny": [
+      "Read(**/.ssh/**)",
+      "Read(**/.env*)",
+      "Read(**/local.properties)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~*)",
+      "Bash(rm -rf /mnt/*)",
+      "Bash(shutdown:*)",
+      "Bash(reboot:*)",
+      "Bash(chmod 777:*)",
+      "Bash(> /dev/sd*)",
+      "Bash(dd:*)",
+      "Bash(format:*)",
+      "Bash(del /f /s C:\\*)"
+    ],
+    "defaultMode": "acceptEdits"
+  }
+}

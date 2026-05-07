@@ -1,4 +1,4 @@
-import { actions, selectors, state, subscribe } from "./store/state.js";
+import { actions, notify, selectors, state, subscribe } from "./store/state.js";
 import { renderAttendancePage } from "./pages/attendancePage.js";
 import {
   renderDirectorAnomalyPage,
@@ -13,6 +13,7 @@ import {
   renderDirectorInventoryPage,
   renderDirectorPeoplePage,
   renderDirectorProfilePage,
+  renderDirectorReadInboxPage,
   renderSelectedPlan,
   renderDirectorStatisticsPage,
   renderDirectorTemplateLibraryPage,
@@ -27,6 +28,7 @@ import { renderLoginPage } from "./pages/loginPage.js";
 import { renderProfilePage } from "./pages/profilePage.js";
 import { renderRoomSelectPage } from "./pages/roomSelectPage.js";
 import { renderTaskDetailPage } from "./pages/taskDetailPage.js";
+import { getAuthToken, requestJson, setAuthToken } from "./utils/cloudApi.js";
 import { renderIcon } from "./utils/caregiverUi.js";
 
 const app = document.getElementById("app");
@@ -78,6 +80,7 @@ const routes = {
   "director-people": renderDirectorPeoplePage,
   "director-profile": renderDirectorProfilePage,
   "director-anomaly": renderDirectorAnomalyPage,
+  "director-read-inbox": renderDirectorReadInboxPage,
   "director-statistics": renderDirectorStatisticsPage,
   "director-elder-timeline": renderDirectorElderTimelinePage,
 };
@@ -100,7 +103,7 @@ function getBottomNavItems() {
     ];
   }
 
-  if (state.session.identity === "director") {
+  if (state.session.identity === "director" || state.session.identity === "admin" || state.session.identity === "superadmin") {
     return [
       { key: "director-home", route: "director-home", label: "总览", icon: "home" },
       { key: "director-care-plans", route: "director-care-plans", label: "方案", icon: "users" },
@@ -425,17 +428,17 @@ function restoreScrollPosition(route) {
   const applyScroll = () => {
     const currentPrimary = getPrimaryScrollContainer();
     if (currentPrimary) {
-      currentPrimary.scrollTop = snapshot.primary;
+      currentPrimary.scrollTop = Math.min(snapshot.primary, Math.max(0, currentPrimary.scrollHeight - currentPrimary.clientHeight));
     }
 
     const contentScroller = app.querySelector(".content-area");
     if (contentScroller) {
-      contentScroller.scrollTop = snapshot.content;
+      contentScroller.scrollTop = Math.min(snapshot.content, Math.max(0, contentScroller.scrollHeight - contentScroller.clientHeight));
     }
 
     const directorPlanScroller = app.querySelector(".director-page--care-plans");
     if (directorPlanScroller) {
-      directorPlanScroller.scrollTop = snapshot.directorPlan || snapshot.primary;
+      directorPlanScroller.scrollTop = Math.min(snapshot.directorPlan || snapshot.primary, Math.max(0, directorPlanScroller.scrollHeight - directorPlanScroller.clientHeight));
     }
 
     const directorPlanFloorStrip = app.querySelector(".director-plan-floor-strip");
@@ -812,13 +815,14 @@ function navigateBackByPageLayer() {
     "director-dispatch": "director-home",
     "director-inventory": "director-home",
     "director-anomaly": "director-home",
+    "director-read-inbox": "director-anomaly",
     "director-statistics": "director-home",
   };
 
   const fallbackRoute = layerFallbacks[route];
   if (!fallbackRoute) return false;
 
-  actions.navigate(fallbackRoute);
+  goBackOrNavigate(fallbackRoute);
   return true;
 }
 
@@ -1330,9 +1334,11 @@ async function exportDirectorCareRecordImage(preview, record) {
     const imageDataUrl = canvas.toDataURL("image/png");
 
     if (window.AndroidBridge && typeof window.AndroidBridge.saveBase64File === "function") {
-      window.AndroidBridge.saveBase64File(fileName, "image/png", imageDataUrl.split(",")[1] || "");
-      actions.announce("图片已保存到下载目录");
-      return;
+      try {
+        window.AndroidBridge.saveBase64File(fileName, "image/png", imageDataUrl.split(",")[1] || "");
+        actions.announce("图片已保存到下载目录");
+        return;
+      } catch (_) {}
     }
 
     const link = document.createElement("a");
@@ -1405,8 +1411,10 @@ function runPendingDirectorCareRecordAction() {
   window.requestAnimationFrame(() => {
     if (pendingAction === "print") {
       if (window.AndroidBridge && typeof window.AndroidBridge.printCurrentPage === "function") {
-        window.AndroidBridge.printCurrentPage(buildDirectorExportFileName(record, "pdf").replace(/\.pdf$/i, ""));
-        return;
+        try {
+          window.AndroidBridge.printCurrentPage(buildDirectorExportFileName(record, "pdf").replace(/\.pdf$/i, ""));
+          return;
+        } catch (_) {}
       }
       window.print();
       return;
@@ -1478,6 +1486,28 @@ function renderApp() {
   syncLiveClockTimer();
 }
 
+async function handleLoginSubmit(event) {
+  const form = event.target.closest(".login-form");
+  if (!form) return;
+  event.preventDefault();
+
+  const username = form.querySelector('[name="username"]')?.value?.trim() || "";
+  const password = form.querySelector('[name="password"]')?.value || "";
+  if (!username || !password) {
+    state.ui.loginError = "请输入用户名和密码";
+    notify();
+    return;
+  }
+  state.ui.loginError = "";
+  notify();
+  try {
+    await actions.login("demo-qinghe-care", username, password);
+  } catch (err) {
+    state.ui.loginError = err.message || "登录失败，请检查账号密码";
+    notify();
+  }
+}
+
 function handleClick(event) {
   const trigger = event.target.closest("[data-action]");
   if (!trigger) return;
@@ -1507,6 +1537,24 @@ function handleClick(event) {
   if (action === "check-app-update") return actions.checkAppUpdate();
   if (action === "download-app-update") return actions.downloadAppUpdate();
   if (action === "close-app-update-dialog") return actions.closeAppUpdateDialog();
+  if (action === "login-submit") {
+    const form = trigger.closest(".login-form");
+    if (!form) return;
+    const username = form.querySelector('[name="username"]')?.value?.trim() || "";
+    const password = form.querySelector('[name="password"]')?.value || "";
+    if (!username || !password) {
+      state.ui.loginError = "请输入用户名和密码";
+      notify();
+      return;
+    }
+    state.ui.loginError = "";
+    notify();
+    actions.login("demo-qinghe-care", username, password).catch((err) => {
+      state.ui.loginError = err.message || "登录失败";
+      notify();
+    });
+    return;
+  }
   if (action === "login") return actions.login();
   if (action === "clock-in") return actions.clockIn();
   if (action === "enter-workbench") return actions.enterWorkbench();
@@ -1854,6 +1902,22 @@ function handleClick(event) {
   }
   if (action === "set-director-audit-filter") return actions.setDirectorAuditFilter(field, value);
   if (action === "select-director-elder") return actions.selectDirectorElder(value);
+  if (action === "mark-exception-read") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.markExceptionRead(value);
+  }
+  if (action === "restore-read-exception") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.restoreReadException(value);
+  }
+  if (action === "delete-read-exception") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.deleteReadException(value);
+  }
+  if (action === "delete-all-read-exceptions") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.deleteAllReadExceptions();
+  }
   if (action === "generate-care-record-preview") return actions.openDirectorCareRecordPreview(collectCareRecordForm());
   if (action === "close-care-record-preview") return actions.closeDirectorCareRecordPreview();
   if (action === "print-care-record" && state.ui.directorCareRecordBatchDate) {
@@ -2007,6 +2071,7 @@ function handleChange(event) {
 }
 
 document.addEventListener("click", handleClick);
+document.addEventListener("submit", handleLoginSubmit);
 document.addEventListener("input", handleInput);
 document.addEventListener("change", handleChange);
 document.addEventListener("contextmenu", (event) => {
@@ -2072,8 +2137,8 @@ function syncDirectorCloudPolling() {
       state.ui.directorReportTemplatePreviewOpen,
   );
   const shouldPoll =
-    state.session.identity === "director" &&
-    state.ui.route === "director-care-records" &&
+    (state.session.identity === "director" || state.session.identity === "admin" || state.session.identity === "superadmin") &&
+    state.ui.route.startsWith("director-") &&
     !isReportTemplateWorkspaceOpen;
 
   if (!shouldPoll) {
@@ -2084,9 +2149,13 @@ function syncDirectorCloudPolling() {
 
   if (directorCloudPollTimer) return;
 
-  actions.refreshDirectorCloudReports({ silent: true });
+  if (!state._holdNotify) {
+    actions.refreshDirectorCloudReports({ silent: true });
+    actions.refreshDirectorCloudTasks({ silent: true });
+  }
   directorCloudPollTimer = window.setInterval(() => {
     actions.refreshDirectorCloudReports({ silent: true });
+    actions.refreshDirectorCloudTasks({ silent: true });
   }, 10000);
 }
 
@@ -2117,13 +2186,23 @@ function isEditingTextInput() {
 }
 
 function getLiveClockText() {
-  return new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
+
+let lastClockMinute = -1;
 
 function updateLiveClockNodes() {
   document.querySelectorAll("[data-live-clock]").forEach((node) => {
     node.textContent = getLiveClockText();
   });
+
+  const minute = new Date().getMinutes();
+  if (minute !== lastClockMinute) {
+    lastClockMinute = minute;
+    if ((state.session.identity === "director" || state.session.identity === "admin" || state.session.identity === "superadmin") && state.session.loggedIn) {
+      actions.tickClock();
+    }
+  }
 }
 
 function syncLiveClockTimer() {
@@ -2145,7 +2224,7 @@ function syncLiveClockTimer() {
 function syncInstitutionSharedStatePolling() {
   const shouldPoll =
     state.session.loggedIn &&
-    (state.session.identity === "director" || state.session.identity === "caregiver") &&
+    (state.session.identity === "director" || state.session.identity === "caregiver" || state.session.identity === "admin" || state.session.identity === "superadmin") &&
     !["login", "attendance"].includes(state.ui.route);
 
   if (!shouldPoll) {
@@ -2156,7 +2235,9 @@ function syncInstitutionSharedStatePolling() {
 
   if (institutionStatePollTimer) return;
 
-  actions.refreshInstitutionSharedState({ silent: true });
+  if (!state._holdNotify) {
+    actions.refreshInstitutionSharedState({ silent: true });
+  }
   institutionStatePollTimer = window.setInterval(() => {
     if (isEditingTextInput()) return;
     actions.refreshInstitutionSharedState({ silent: true });
@@ -2165,4 +2246,40 @@ function syncInstitutionSharedStatePolling() {
 
 subscribe(renderApp);
 registerServiceWorker();
-renderApp();
+
+(async function autoLogin() {
+  const token = getAuthToken();
+  if (!token) { renderApp(); return; }
+  try {
+    const result = await requestJson("/api/auth/me");
+    if (result && result.status === "success" && result.user) {
+      setAuthToken(token);
+      state.session.token = token;
+      state.session.user = result.user;
+      state.session.identity = result.user.role;
+      state.session.loggedIn = true;
+      const role = result.user.role;
+      if (role === "caregiver") {
+        state.ui.route = "attendance";
+        state.ui.activeTab = "home";
+      } else if (role === "family") {
+        state.ui.route = "family-home";
+        state.ui.activeTab = "family-home";
+      } else if (role === "director" || role === "admin" || role === "superadmin") {
+        state.ui.route = "director-home";
+        state.ui.activeTab = "director-home";
+      }
+      renderApp();
+      if (role === "caregiver") {
+        actions.refreshInstitutionSharedState({ silent: true });
+      } else if (role === "director" || role === "admin" || role === "superadmin") {
+        actions.loadDirectorInitialData();
+      }
+      return;
+    }
+  } catch (_) {}
+  setAuthToken("");
+  state.session.token = "";
+  state.session.user = null;
+  renderApp();
+})();

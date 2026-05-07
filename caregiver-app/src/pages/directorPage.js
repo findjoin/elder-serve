@@ -938,16 +938,22 @@ function renderDirectorTaskOverviewBars(overview) {
       <div class="director-task-overview-bars__head">
         <span>预期 ${overview.expectedDue}/${overview.dailyTotal}</span>
         <span>实际 ${overview.actualHandled}/${overview.dailyTotal}</span>
-        <span>临时 ${overview.temporaryHandled}/${overview.temporaryTotal}</span>
       </div>
       <div class="director-progress-stack" aria-hidden="true">
         <span class="director-progress-stack__expected" style="width: ${expected}%;"></span>
         <span class="director-progress-stack__actual" style="width: ${actual}%;"></span>
-        <span class="director-progress-stack__temporary" style="width: ${temporary}%;"></span>
       </div>
       <div class="director-task-overview-legend">
         <span><i class="is-expected"></i>预期进度</span>
         <span><i class="is-actual"></i>实际完成</span>
+      </div>
+      <div class="director-task-overview-bars__head">
+        <span>临时 ${overview.temporaryHandled}/${overview.temporaryTotal}</span>
+      </div>
+      <div class="director-progress-stack" aria-hidden="true">
+        <span class="director-progress-stack__temporary" style="width: ${temporary}%;"></span>
+      </div>
+      <div class="director-task-overview-legend">
         <span><i class="is-temporary"></i>临时任务</span>
       </div>
     </div>
@@ -1037,12 +1043,12 @@ function renderDirectorExceptionReportCard(report) {
           <strong>${report.room}室 · ${report.elderName} · ${report.title}</strong>
           <div class="director-exception-report__meta">
             <span>负责护工：${report.caregiverName}</span>
-            <span>${report.schedule}</span>
+            <span>${report.reportedAt ? report.reportedAt.split(" ")[0] + " · " : ""}${report.schedule}</span>
           </div>
         </div>
         ${renderStatusPill(report.statusLabel, "error")}
       </div>
-      <p class="director-copy">${report.note}</p>
+      <p class="director-exception-report__note">${report.note}</p>
       <div class="director-exception-report__photos">
         ${
           report.evidence.length
@@ -1055,6 +1061,31 @@ function renderDirectorExceptionReportCard(report) {
                 .join("")
             : '<span>暂无照片</span>'
         }
+      </div>
+      <div class="director-exception-report__actions">
+        <button class="button button--small button--secondary" data-action="mark-exception-read" data-value="${report.id}">标记已读</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderReadExceptionCard(report) {
+  return `
+    <article class="director-card director-card--dense director-exception-report director-exception-report--read">
+      <div class="director-card__head director-card__head--compact">
+        <div>
+          <strong>${report.room}室 · ${report.elderName} · ${report.title}</strong>
+          <div class="director-exception-report__meta">
+            <span>负责护工：${report.caregiverName}</span>
+            <span>${report.reportedAt ? report.reportedAt.split(" ")[0] + " · " : ""}${report.schedule}</span>
+          </div>
+        </div>
+        ${renderStatusPill(report.statusLabel, "muted")}
+      </div>
+      <p class="director-exception-report__note">${report.note}</p>
+      <div class="director-exception-report__actions">
+        <button class="button button--small button--secondary" data-action="restore-read-exception" data-value="${report.id}">还原</button>
+        <button class="button button--small button--danger" data-action="delete-read-exception" data-value="${report.id}">删除</button>
       </div>
     </article>
   `;
@@ -3015,6 +3046,13 @@ export function renderDirectorCareRecordsPage({ state, selectors }) {
 }
 
 export function renderDirectorHomePage({ state, selectors }) {
+  if (!state.cloud.tasksFetchedAt && !state.cloud.tasksError) {
+    return `<section class="director-page">
+      ${renderDirectorHeader("院长工作台", state.director.date)}
+      <div class="empty-state empty-state--soft"><span id="sync-status">${state.ui.syncPhase || "正在连接云端..."}</span></div>
+    </section>`;
+  }
+
   const { taskProgress, floors } = state.director;
   const inventoryMeta = `${state.director.inventorySummary.warningCount} 项预警`;
   const anomalyMeta = `${selectors.directorExceptionReports?.length || 0} 条记录`;
@@ -3870,6 +3908,8 @@ export function renderDirectorProfilePage({ state }) {
             </div>
           </div>
         </article>
+
+        <button type="button" class="button button--danger button--block" style="margin-top:16px" data-action="logout">退出登录</button>
       </div>
     </section>
   `;
@@ -3933,16 +3973,49 @@ export function renderDirectorInventoryPage({ state }) {
 
 export function renderDirectorAnomalyPage({ state, selectors }) {
   const reports = selectors.directorExceptionReports || [];
+  const readReports = selectors.directorReadExceptionReports || [];
+
+  const headerActions = readReports.length
+    ? `<button class="button button--small button--outline" data-action="navigate" data-route="director-read-inbox">${renderIcon("message")} 已读信息箱 (${readReports.length})</button>`
+    : "";
 
   return `
     <section class="director-page">
-      ${renderDirectorHeader("异常状态", state.director.date)}
+      ${renderDirectorHeader("异常状态", state.director.date, headerActions)}
 
       <div class="director-stack">
         ${
           reports.length
             ? reports.map(renderDirectorExceptionReportCard).join("")
             : '<div class="empty-state empty-state--soft">当前没有员工上传的异常任务报告。</div>'
+        }
+      </div>
+    </section>
+  `;
+}
+
+export function renderDirectorReadInboxPage({ state, selectors }) {
+  const readReports = selectors.directorReadExceptionReports || [];
+
+  const headerActions = '<button class="button button--small" data-action="navigate" data-route="director-anomaly">返回异常页</button>';
+
+  return `
+    <section class="director-page">
+      ${renderDirectorHeader("已读信息箱", state.director.date, headerActions)}
+
+      <div class="director-stack">
+        ${
+          readReports.length
+            ? `
+              <div class="director-read-exception-section">
+                <div class="director-read-exception-section__head">
+                  <h3>已读 (${readReports.length})</h3>
+                  <button class="button button--small button--danger" data-action="delete-all-read-exceptions">全部删除</button>
+                </div>
+                ${readReports.map(renderReadExceptionCard).join("")}
+              </div>
+            `
+            : '<div class="empty-state empty-state--soft">没有已读的异常报告。</div>'
         }
       </div>
     </section>
@@ -3999,20 +4072,25 @@ export function renderDirectorElderTimelinePage({ state, selectors }) {
 
         <section class="director-timeline">
           ${timeline.entries
-            .map(
-              (item, index) => `
-                <article class="director-timeline__item">
+            .map((item) => {
+              const tone = item.statusTone || item.tone || "muted";
+              const statusLabel = item.statusLabel || (tone === "success" ? "已完成" : tone === "overdue" ? "超时" : "未完成");
+              return `
+                <article class="director-timeline__item director-timeline__item--${tone}">
                   <div class="director-timeline__time">${item.time}</div>
                   <div class="director-timeline__line">
-                    <span class="director-timeline__dot ${index === 0 ? "is-active" : ""}"></span>
+                    <span class="director-timeline__dot director-timeline__dot--${tone}"></span>
                   </div>
-                  <div class="director-timeline__card">
-                    <strong>${item.title}</strong>
+                  <div class="director-timeline__card director-timeline__card--${tone}">
+                    <div class="director-timeline__card-head director-timeline__card-head--status">
+                      <strong>${item.title}</strong>
+                      <span class="director-timeline__status director-timeline__status--${tone}">${statusLabel}</span>
+                    </div>
                     <p>${item.note}</p>
                   </div>
                 </article>
-              `,
-            )
+              `;
+            })
             .join("")}
         </section>
       </div>

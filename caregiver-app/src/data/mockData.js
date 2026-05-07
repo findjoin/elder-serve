@@ -1,4 +1,4 @@
-function getRuntimeDate() {
+﻿function getRuntimeDate() {
   return new Intl.DateTimeFormat("sv-SE").format(new Date());
 }
 
@@ -6,7 +6,7 @@ const runtimeDate = getRuntimeDate();
 
 const elders = [
   {
-    id: "elder-101",
+    id: "elder-demo-101",
     room: "101",
     bed: "101-1床",
     floor: 1,
@@ -15,7 +15,7 @@ const elders = [
     age: 82,
     level: "二级护理",
     tags: ["高血压", "晨间协助"],
-    reportTemplateId: "daily-report-basic",
+    reportTemplateId: "daily-report-qinghe-basic",
     reportTemplateTitle: "测试日报模板（15项）",
     familyContact: "长子：王建设",
     familyPhone: "138****8888",
@@ -23,7 +23,7 @@ const elders = [
     latestHeartRate: "72",
   },
   {
-    id: "elder-102",
+    id: "elder-demo-102",
     room: "102",
     bed: "102-1床",
     floor: 1,
@@ -32,13 +32,15 @@ const elders = [
     age: 84,
     level: "一级护理",
     tags: ["糖尿病", "用药提醒"],
+    reportTemplateId: "daily-report-qinghe-basic",
+    reportTemplateTitle: "测试日报模板（15项）",
     familyContact: "女儿：李晓云",
     familyPhone: "139****1024",
     latestBloodPressure: "128/80",
     latestHeartRate: "74",
   },
   {
-    id: "elder-103",
+    id: "elder-demo-103",
     room: "103",
     bed: "103-1床",
     floor: 1,
@@ -47,13 +49,15 @@ const elders = [
     age: 79,
     level: "二级护理",
     tags: ["卧床", "翻身"],
+    reportTemplateId: "daily-report-qinghe-basic",
+    reportTemplateTitle: "测试日报模板（15项）",
     familyContact: "儿子：张建华",
     familyPhone: "137****3301",
     latestBloodPressure: "130/83",
     latestHeartRate: "70",
   },
   {
-    id: "elder-201",
+    id: "elder-demo-201",
     room: "201",
     bed: "201-1床",
     floor: 2,
@@ -62,13 +66,15 @@ const elders = [
     age: 86,
     level: "二级护理",
     tags: ["晨间巡视", "助行"],
+    reportTemplateId: "daily-report-qinghe-basic",
+    reportTemplateTitle: "测试日报模板（15项）",
     familyContact: "外孙：陈安",
     familyPhone: "136****2001",
     latestBloodPressure: "126/79",
     latestHeartRate: "73",
   },
   {
-    id: "elder-202",
+    id: "elder-demo-202",
     room: "202",
     bed: "202-1床",
     floor: 2,
@@ -77,13 +83,32 @@ const elders = [
     age: 81,
     level: "一级护理",
     tags: ["独立进食", "午间观察"],
+    reportTemplateId: "daily-report-qinghe-basic",
+    reportTemplateTitle: "测试日报模板（15项）",
     familyContact: "侄子：赵岗",
     familyPhone: "135****2218",
     latestBloodPressure: "122/78",
     latestHeartRate: "71",
   },
   {
-    id: "elder-301",
+    id: "elder-demo-203",
+    room: "203",
+    bed: "203-1床",
+    floor: 2,
+    name: "胡奶奶",
+    gender: "女",
+    age: 87,
+    level: "三级护理",
+    tags: ["重点观察", "需拍照"],
+    reportTemplateId: "daily-report-qinghe-basic",
+    reportTemplateTitle: "测试日报模板（15项）",
+    familyContact: "女儿：胡敏",
+    familyPhone: "135****2030",
+    latestBloodPressure: "138/86",
+    latestHeartRate: "77",
+  },
+  {
+    id: "elder-demo-301",
     room: "301",
     bed: "301-1床",
     floor: 3,
@@ -92,13 +117,66 @@ const elders = [
     age: 83,
     level: "二级护理",
     tags: ["助餐", "助浴"],
+    reportTemplateId: "daily-report-qinghe-basic",
+    reportTemplateTitle: "测试日报模板（15项）",
     familyContact: "儿子：孙平",
     familyPhone: "134****3017",
     latestBloodPressure: "129/81",
     latestHeartRate: "76",
   },
   {
-    id: "elder-501",
+    id: "elder-demo-302",
+    room: "302",
+    bed: "302-1床",
+    floor: 3,
+    name: "刘大爷",
+    gender: "男",
+    age: 80,
+    level: "一级护理",
+    tags: ["日常巡房"],
+    reportTemplateId: "daily-report-qinghe-basic",
+    reportTemplateTitle: "测试日报模板（15项）",
+    familyContact: "女儿：刘青",
+    familyPhone: "134****3020",
+    latestBloodPressure: "121/78",
+    latestHeartRate: "69",
+  },
+  {
+    id: "elder-demo-401",
+    room: "401",
+    bed: "401-1床",
+    floor: 4,
+    name: "何爷爷",
+    gender: "男",
+    age: 85,
+    level: "二级护理",
+    tags: ["康复训练", "助行"],
+    reportTemplateId: "daily-report-qinghe-basic",
+    reportTemplateTitle: "测试日报模板（15项）",
+    familyContact: "儿子：何明",
+    familyPhone: "133****4010",
+    latestBloodPressure: "132/84",
+    latestHeartRate: "75",
+  },
+  {
+    id: "elder-demo-402",
+    room: "402",
+    bed: "402-1床",
+    floor: 4,
+    name: "黄奶奶",
+    gender: "女",
+    age: 88,
+    level: "三级护理",
+    tags: ["卧床", "重点翻身"],
+    reportTemplateId: "daily-report-qinghe-basic",
+    reportTemplateTitle: "测试日报模板（15项）",
+    familyContact: "女儿：黄婉",
+    familyPhone: "133****4020",
+    latestBloodPressure: "140/88",
+    latestHeartRate: "78",
+  },
+  {
+    id: "elder-demo-501",
     room: "501",
     bed: "501-1床",
     floor: 5,
@@ -107,13 +185,15 @@ const elders = [
     age: 88,
     level: "三级护理",
     tags: ["重点观察", "卧床"],
+    reportTemplateId: "daily-report-qinghe-basic",
+    reportTemplateTitle: "测试日报模板（15项）",
     familyContact: "女儿：周敏",
     familyPhone: "133****5001",
     latestBloodPressure: "142/88",
     latestHeartRate: "75",
   },
   {
-    id: "elder-505",
+    id: "elder-demo-505",
     room: "505",
     bed: "505-1床",
     floor: 5,
@@ -122,6 +202,8 @@ const elders = [
     age: 85,
     level: "二级护理",
     tags: ["血压复测", "重点回访"],
+    reportTemplateId: "daily-report-qinghe-basic",
+    reportTemplateTitle: "测试日报模板（15项）",
     familyContact: "孙女：冯瑶",
     familyPhone: "130****5005",
     latestBloodPressure: "155/96",
@@ -131,7 +213,7 @@ const elders = [
 
 const caregivers = [
   {
-    id: "caregiver-01",
+    id: "caregiver-demo-01",
     name: "张建国",
     role: "金牌护工",
     employeeNo: "20260420",
@@ -140,7 +222,7 @@ const caregivers = [
     status: "off-duty",
   },
   {
-    id: "caregiver-02",
+    id: "caregiver-demo-02",
     name: "李美兰",
     role: "护工组长",
     employeeNo: "20260421",
@@ -149,7 +231,7 @@ const caregivers = [
     status: "on-duty",
   },
   {
-    id: "caregiver-03",
+    id: "caregiver-demo-03",
     name: "陈秀英",
     role: "机动护工",
     employeeNo: "20260422",
@@ -158,7 +240,7 @@ const caregivers = [
     status: "on-duty",
   },
   {
-    id: "caregiver-04",
+    id: "caregiver-demo-04",
     name: "周桂芬",
     role: "晚班护工",
     employeeNo: "20260423",
@@ -280,49 +362,49 @@ const taskTemplates = [
 ];
 
 const dailyReportTemplate = {
-  id: "daily-report-basic",
+  id: "daily-report-qinghe-basic",
   version: 6,
   title: "测试日报模板（15项）",
   description: "用于验证日报任务能否按时间同步到护工端时间轴。",
   careLevel: "all",
   sections: [
     {
-      id: "test-life-care",
+      id: "demo-life-care",
       title: "生活照料",
       items: [
-        { id: "test-room-tidy", label: "房间整理", frequencyDays: 1, timeWindow: "06:30-06:50" },
-        { id: "test-wake-up", label: "协助起床", frequencyDays: 1, timeWindow: "07:00-07:20" },
-        { id: "test-wash-face", label: "洗脸刷牙", frequencyDays: 1, timeWindow: "07:20-07:40" },
-        { id: "test-toilet-clean", label: "卫生间清洁", frequencyDays: 1, timeWindow: "08:10-08:30" },
-        { id: "test-clothes", label: "更换衣物", frequencyDays: 1, timeWindow: "16:00-16:15" },
+        { id: "demo-room-tidy", label: "房间整理", frequencyDays: 1, timeWindow: "06:30-06:50" },
+        { id: "demo-assist-getup", label: "协助起床", frequencyDays: 1, timeWindow: "07:00-07:20" },
+        { id: "demo-wash-face", label: "洗脸刷牙", frequencyDays: 1, timeWindow: "07:20-07:40" },
+        { id: "demo-toilet-clean", label: "卫生间清洁", frequencyDays: 1, timeWindow: "08:10-08:30" },
+        { id: "demo-change-clothes", label: "更换衣物", frequencyDays: 1, timeWindow: "16:00-16:15" },
       ],
     },
     {
-      id: "test-meal-care",
+      id: "demo-meal-care",
       title: "饮食照料",
       items: [
-        { id: "test-breakfast", label: "早餐助餐", frequencyDays: 1, timeWindow: "08:30-09:00", requirePhoto: true },
-        { id: "test-water", label: "饮水提醒", frequencyDays: 1, timeWindow: "09:30-09:40" },
-        { id: "test-lunch", label: "午餐助餐", frequencyDays: 1, timeWindow: "11:30-12:00", requirePhoto: true },
-        { id: "test-dinner", label: "晚餐助餐", frequencyDays: 1, timeWindow: "17:30-18:00", requirePhoto: true },
+        { id: "demo-breakfast", label: "早餐助餐", frequencyDays: 1, timeWindow: "08:30-09:00", requirePhoto: true },
+        { id: "demo-water", label: "饮水提醒", frequencyDays: 1, timeWindow: "09:30-09:40" },
+        { id: "demo-lunch", label: "午餐助餐", frequencyDays: 1, timeWindow: "11:30-12:00", requirePhoto: true },
+        { id: "demo-dinner", label: "晚餐助餐", frequencyDays: 1, timeWindow: "17:30-18:00", requirePhoto: true },
       ],
     },
     {
-      id: "test-care-support",
+      id: "demo-care-support",
       title: "护理协助",
       items: [
-        { id: "test-turning-morning", label: "上午翻身", frequencyDays: 1, timeWindow: "10:00-10:15", requirePhoto: true },
-        { id: "test-medicine-noon", label: "午前用药", frequencyDays: 1, timeWindow: "10:45-11:00", requirePhoto: true },
-        { id: "test-walk", label: "协助行走", frequencyDays: 1, timeWindow: "14:30-14:50" },
+        { id: "demo-turning", label: "上午翻身", frequencyDays: 1, timeWindow: "10:00-10:15", requirePhoto: true },
+        { id: "demo-medication", label: "午前用药", frequencyDays: 1, timeWindow: "10:45-11:00", requirePhoto: true },
+        { id: "demo-walk", label: "协助行走", frequencyDays: 1, timeWindow: "14:30-14:50" },
       ],
     },
     {
-      id: "test-health-monitor",
+      id: "demo-health-monitor",
       title: "健康监测",
       items: [
-        { id: "test-temperature", label: "测量体温", frequencyDays: 1, timeWindow: "07:45-07:55" },
-        { id: "test-blood-pressure", label: "测量血压", frequencyDays: 1, timeWindow: "15:00-15:10" },
-        { id: "test-night-patrol", label: "晚间巡房", frequencyDays: 1, timeWindow: "19:30-19:45", requirePhoto: true },
+        { id: "demo-temperature", label: "测量体温", frequencyDays: 1, timeWindow: "07:45-07:55" },
+        { id: "demo-blood-pressure", label: "测量血压", frequencyDays: 1, timeWindow: "15:00-15:10" },
+        { id: "demo-night-patrol", label: "晚间巡房", frequencyDays: 1, timeWindow: "19:30-19:45", requirePhoto: true },
       ],
     },
   ],
@@ -345,94 +427,94 @@ export function createReportTemplateItems(template = dailyReportTemplate, defaul
 const elderCarePlans = [
   {
     id: "plan-101",
-    elderId: "elder-101",
+    elderId: "elder-demo-101",
     level: "二级护理",
     reviewCycle: "每周复核",
     note: "晨起状态稳定，重点关注翻身与午前用药。",
     items: [
-      { id: "plan-101-1", templateId: "template-wake-up", schedule: "07:20", assignment: "floor-owner", initialStatus: "completed", isEnabled: true },
-      { id: "plan-101-2", templateId: "template-temperature", schedule: "07:35", assignment: "floor-owner", initialStatus: "completed", isEnabled: true },
-      { id: "plan-101-3", templateId: "template-turn-over", schedule: "09:30", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
-      { id: "plan-101-4", templateId: "template-medication", schedule: "11:30", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
+      { id: "plan-demo-101-1", templateId: "template-wake-up", schedule: "07:20", assignment: "floor-owner", initialStatus: "completed", isEnabled: true },
+      { id: "plan-demo-101-2", templateId: "template-temperature", schedule: "07:35", assignment: "floor-owner", initialStatus: "completed", isEnabled: true },
+      { id: "plan-demo-101-3", templateId: "template-turn-over", schedule: "09:30", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
+      { id: "plan-demo-101-4", templateId: "template-medication", schedule: "11:30", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
     ],
   },
   {
     id: "plan-102",
-    elderId: "elder-102",
+    elderId: "elder-demo-102",
     level: "一级护理",
     reviewCycle: "每周复核",
     note: "早餐助餐需留痕，用药按时段勾选确认，午后辅助洗漱暂不启用。",
     items: [
-      { id: "plan-102-1", templateId: "template-feed-breakfast", schedule: "08:10", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
-      { id: "plan-102-2", templateId: "template-medication", schedule: "10:10", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
-      { id: "plan-102-3", templateId: "template-wash", schedule: "14:30", assignment: "floor-owner", initialStatus: "pending", isEnabled: false },
+      { id: "plan-demo-102-1", templateId: "template-feed-breakfast", schedule: "08:10", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
+      { id: "plan-demo-102-2", templateId: "template-medication", schedule: "10:10", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
+      { id: "plan-demo-102-3", templateId: "template-wash", schedule: "14:30", assignment: "floor-owner", initialStatus: "pending", isEnabled: false },
     ],
   },
   {
     id: "plan-103",
-    elderId: "elder-103",
+    elderId: "elder-demo-103",
     level: "二级护理",
     reviewCycle: "每日晨会复核",
     note: "卧床老人需要院长灵活发布，避免晨间扎堆。",
     items: [
-      { id: "plan-103-1", templateId: "template-turn-over", schedule: "09:20", assignment: "manual", initialStatus: "pending", isEnabled: true },
-      { id: "plan-103-2", templateId: "template-bp-recheck", schedule: "14:10", assignment: "manual", initialStatus: "pending", isEnabled: true },
+      { id: "plan-demo-103-1", templateId: "template-turn-over", schedule: "09:20", assignment: "manual", initialStatus: "pending", isEnabled: true },
+      { id: "plan-demo-103-2", templateId: "template-bp-recheck", schedule: "14:10", assignment: "manual", initialStatus: "pending", isEnabled: true },
     ],
   },
   {
     id: "plan-201",
-    elderId: "elder-201",
+    elderId: "elder-demo-201",
     level: "二级护理",
     reviewCycle: "每周复核",
     note: "晨间任务标准化执行。",
     items: [
-      { id: "plan-201-1", templateId: "template-wake-up", schedule: "07:30", assignment: "floor-owner", initialStatus: "completed", isEnabled: true },
-      { id: "plan-201-2", templateId: "template-wash", schedule: "07:45", assignment: "floor-owner", initialStatus: "completed", isEnabled: true },
-      { id: "plan-201-3", templateId: "template-temperature", schedule: "08:40", assignment: "floor-owner", initialStatus: "completed", isEnabled: true },
+      { id: "plan-demo-201-1", templateId: "template-wake-up", schedule: "07:30", assignment: "floor-owner", initialStatus: "completed", isEnabled: true },
+      { id: "plan-demo-201-2", templateId: "template-wash", schedule: "07:45", assignment: "floor-owner", initialStatus: "completed", isEnabled: true },
+      { id: "plan-demo-201-3", templateId: "template-temperature", schedule: "08:40", assignment: "floor-owner", initialStatus: "completed", isEnabled: true },
     ],
   },
   {
     id: "plan-202",
-    elderId: "elder-202",
+    elderId: "elder-demo-202",
     level: "一级护理",
     reviewCycle: "每周复核",
     note: "主要保留用药提醒，午后重点回访按院长决定启停。",
     items: [
-      { id: "plan-202-1", templateId: "template-medication", schedule: "10:20", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
-      { id: "plan-202-2", templateId: "template-follow-up", schedule: "15:10", assignment: "manual", initialStatus: "pending", isEnabled: false },
+      { id: "plan-demo-202-1", templateId: "template-medication", schedule: "10:20", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
+      { id: "plan-demo-202-2", templateId: "template-follow-up", schedule: "15:10", assignment: "manual", initialStatus: "pending", isEnabled: false },
     ],
   },
   {
     id: "plan-301",
-    elderId: "elder-301",
+    elderId: "elder-demo-301",
     level: "二级护理",
     reviewCycle: "每周复核",
     note: "三楼当前由机动护工负责，需兼顾助餐与翻身。",
     items: [
-      { id: "plan-301-1", templateId: "template-feed-breakfast", schedule: "08:20", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
-      { id: "plan-301-2", templateId: "template-turn-over", schedule: "13:50", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
+      { id: "plan-demo-301-1", templateId: "template-feed-breakfast", schedule: "08:20", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
+      { id: "plan-demo-301-2", templateId: "template-turn-over", schedule: "13:50", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
     ],
   },
   {
     id: "plan-501",
-    elderId: "elder-501",
+    elderId: "elder-demo-501",
     level: "三级护理",
     reviewCycle: "每日复核",
     note: "卧床老人午后需重点巡视。",
     items: [
-      { id: "plan-501-1", templateId: "template-turn-over", schedule: "09:40", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
-      { id: "plan-501-2", templateId: "template-follow-up", schedule: "14:20", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
+      { id: "plan-demo-501-1", templateId: "template-turn-over", schedule: "09:40", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
+      { id: "plan-demo-501-2", templateId: "template-follow-up", schedule: "14:20", assignment: "floor-owner", initialStatus: "pending", isEnabled: true },
     ],
   },
   {
     id: "plan-505",
-    elderId: "elder-505",
+    elderId: "elder-demo-505",
     level: "二级护理",
     reviewCycle: "每日复核",
     note: "血压异常，复测与回访均由院长控制发布。",
     items: [
-      { id: "plan-505-1", templateId: "template-bp-recheck", schedule: "09:10", assignment: "manual", initialStatus: "risk", isEnabled: true },
-      { id: "plan-505-2", templateId: "template-follow-up", schedule: "15:00", assignment: "manual", initialStatus: "pending", isEnabled: true },
+      { id: "plan-demo-505-1", templateId: "template-bp-recheck", schedule: "09:10", assignment: "manual", initialStatus: "risk", isEnabled: true },
+      { id: "plan-demo-505-2", templateId: "template-follow-up", schedule: "15:00", assignment: "manual", initialStatus: "pending", isEnabled: true },
     ],
   },
 ];
@@ -446,9 +528,9 @@ const batchJobs = [
 ];
 
 const vitals = [
-  { elderId: "elder-101", bloodPressure: "135/85", bloodSugar: "5.6", temperature: "36.5", time: "07:35" },
-  { elderId: "elder-102", bloodPressure: "128/80", bloodSugar: "6.1", temperature: "36.6", time: "08:15" },
-  { elderId: "elder-505", bloodPressure: "155/96", bloodSugar: "5.8", temperature: "36.4", time: "09:05" },
+  { elderId: "elder-demo-101", bloodPressure: "135/85", bloodSugar: "5.6", temperature: "36.5", time: "07:35" },
+  { elderId: "elder-demo-102", bloodPressure: "128/80", bloodSugar: "6.1", temperature: "36.6", time: "08:15" },
+  { elderId: "elder-demo-505", bloodPressure: "155/96", bloodSugar: "5.8", temperature: "36.4", time: "09:05" },
 ];
 
 const anomalies = [
@@ -456,7 +538,7 @@ const anomalies = [
     id: "anomaly-1",
     type: "老人身体不适",
     level: "high",
-    elderId: "elder-505",
+    elderId: "elder-demo-505",
     time: "10:18",
     status: "已同步院长端",
     note: "老人头晕，已卧床休息，等待复测结果。",
@@ -482,7 +564,7 @@ const history = [
   {
     id: "history-1",
     time: "2026-04-22 08:30",
-    elderId: "elder-101",
+    elderId: "elder-demo-101",
     elder: "王大爷",
     room: "101",
     task: "早餐助餐",
@@ -496,7 +578,7 @@ const history = [
   {
     id: "history-2",
     time: "2026-04-22 09:15",
-    elderId: "elder-102",
+    elderId: "elder-demo-102",
     elder: "李奶奶",
     room: "102",
     task: "晨间洗漱",
@@ -510,7 +592,7 @@ const history = [
   {
     id: "history-3",
     time: "2026-04-21 18:00",
-    elderId: "elder-103",
+    elderId: "elder-demo-103",
     elder: "张爷爷",
     room: "103",
     task: "晚间洗漱",
@@ -524,7 +606,7 @@ const history = [
   {
     id: "history-4",
     time: "2026-04-20 10:00",
-    elderId: "elder-201",
+    elderId: "elder-demo-201",
     elder: "陈奶奶",
     room: "201",
     task: "翻身拍背",
@@ -851,6 +933,11 @@ export function buildTasksFromConfiguration({
   previousTasks = [],
 }) {
   const previousByPlanItemId = new Map(previousTasks.map((task) => [task.planItemId, task]));
+  const previousByFallback = new Map();
+  previousTasks.forEach((task) => {
+    const key = `${task.elderId || ""}|${task.title || ""}|${task.window || task.schedule || ""}`;
+    if (key.length > 2) previousByFallback.set(key, task);
+  });
   const nextSeed =
     previousTasks.reduce((max, task) => {
       const match = /task-(\d+)/.exec(task.id || "");
@@ -868,7 +955,7 @@ export function buildTasksFromConfiguration({
       const template = getTemplateById(item.templateId, taskTemplates);
       if (!template || !template.isActive || item.isEnabled === false) return;
 
-      const previousTask = previousByPlanItemId.get(item.id);
+      const previousTask = previousByPlanItemId.get(item.id) || previousByFallback.get(`${elder.id}|${template.title}|${item.schedule}`);
       const floorOwner = getCaregiverForFloor(elder.floor, caregivers);
       const defaultCaregiverId = item.assignment === "floor-owner" ? floorOwner?.id || "" : "";
       const caregiverId = previousTask ? previousTask.caregiverId : defaultCaregiverId;
@@ -895,13 +982,18 @@ export function buildTasksFromConfiguration({
         assignmentStatus,
         publishedAt: previousTask?.publishedAt || "",
         acceptedAt: previousTask?.acceptedAt || (assignmentStatus === "accepted" ? previousTask?.acceptedAt || "" : ""),
+        exceptionNote: previousTask?.exceptionNote || "",
+        exception: previousTask?.exception || "",
+        exceptionType: previousTask?.exceptionType || "",
+        exceptionEvidence: previousTask?.exceptionEvidence || [],
+        exceptionReportedAt: previousTask?.exceptionReportedAt || "",
       });
     });
   });
 
   if (reportTemplate?.sections?.length) {
     const reportTemplateCareLevel = reportTemplate.careLevel || "all";
-    const reportTemplateId = reportTemplate.id || "daily-report-basic";
+    const reportTemplateId = reportTemplate.id || "daily-report-qinghe-basic";
     const hasReportTemplateAssignments = elders.some((elder) => elder.reportTemplateId);
     elders.forEach((elder) => {
       if (hasReportTemplateAssignments && elder.reportTemplateId !== reportTemplateId) return;
@@ -919,7 +1011,7 @@ export function buildTasksFromConfiguration({
           if (!item?.id || !isReportTemplateItemDue(item, recordDate)) return;
 
           const planItemId = `report-${recordDate}-${elder.id}-${section.id}-${item.id}`;
-          const previousTask = previousByPlanItemId.get(planItemId);
+          const previousTask = previousByPlanItemId.get(planItemId) || previousByFallback.get(`${elder.id}|${item.label || "日报护理任务"}|${item.timeWindow}`);
           const caregiverId = previousTask ? previousTask.caregiverId : defaultCaregiverId;
           const assignmentStatus = previousTask?.assignmentStatus || (caregiverId ? "published" : "unassigned");
           const schedule = parseScheduleStart(item.timeWindow);
@@ -945,6 +1037,11 @@ export function buildTasksFromConfiguration({
             assignmentStatus,
             publishedAt: previousTask?.publishedAt || (caregiverId ? schedule : ""),
             acceptedAt: previousTask?.acceptedAt || "",
+            exceptionNote: previousTask?.exceptionNote || "",
+            exception: previousTask?.exception || "",
+            exceptionType: previousTask?.exceptionType || "",
+            exceptionEvidence: previousTask?.exceptionEvidence || [],
+            exceptionReportedAt: previousTask?.exceptionReportedAt || "",
           });
         });
       });
@@ -954,7 +1051,7 @@ export function buildTasksFromConfiguration({
   return tasks.sort((left, right) => {
     const bySchedule = left.schedule.localeCompare(right.schedule);
     if (bySchedule !== 0) return bySchedule;
-    return left.elderId.localeCompare(right.elderId);
+    return (left.id || "").localeCompare(right.id || "");
   });
 }
 
@@ -1043,7 +1140,7 @@ export function createMockState() {
   const seededCareReports = [
     {
       ...createCareRecordDraft({
-        elderId: "elder-102",
+        elderId: "elder-demo-102",
         recordDate: director.date,
         recordTime: "15:35",
         institutionName: "青禾镇颐养护理院",
@@ -1070,7 +1167,7 @@ export function createMockState() {
     },
     {
       ...createCareRecordDraft({
-        elderId: "elder-505",
+        elderId: "elder-demo-505",
         recordDate: director.date,
         recordTime: "16:10",
         institutionName: "青禾镇颐养护理院",
@@ -1130,6 +1227,8 @@ export function createMockState() {
       clockOutAt: "",
       clockInLocation: "",
       clockInLocationRaw: null,
+      token: "",
+      user: null,
     },
     ui: {
       route: "login",
@@ -1145,13 +1244,13 @@ export function createMockState() {
       activeTab: "home",
       selectedFloor: 1,
       selectedRoom: "101",
-      selectedElderId: "elder-101",
+      selectedElderId: "elder-demo-101",
       selectedTaskId: tasks.find((item) => item.caregiverId === caregivers[0].id && item.status !== "completed")?.id || "",
       selectedHistoryId: "history-1",
       selectedDirectorFloor: "1F",
       selectedDirectorElder: "王大爷",
       selectedDirectorPlanFloor: 1,
-      selectedDirectorPlanRoom: "elder-101",
+      selectedDirectorPlanRoom: "elder-demo-101",
       directorPlanTimelineOpen: false,
       directorPlanTimelineSettled: false,
       selectedDirectorCareRecordElderId: directorCareRecordDraft.elderId,
@@ -1170,6 +1269,8 @@ export function createMockState() {
       selectedDirectorStatisticsCaregiverId: "",
       directorAuditFloor: "all",
       directorAuditDate: director.date,
+      directorReadExceptionIds: [],
+      syncPhase: "",
       directorAuditProject: "all",
       directorInboxSelectedDate: "",
       directorInboxExportDate: "",

@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Elder Serve — 开发者管理后台</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --primary:#2563eb;--primary-light:#dbeafe;--success:#16a34a;--success-light:#dcfce7;
+  --danger:#dc2626;--danger-light:#fee2e2;--warning:#d97706;--warning-light:#fef3c7;
+  --bg:#f1f5f9;--surface:#fff;--border:#e2e8f0;--text:#1e293b;--text-secondary:#64748b;
+  --sidebar-bg:#0f172a;--sidebar-text:#cbd5e1;--sidebar-active:#2563eb;
+  --radius:8px;--shadow:0 1px 3px 0 rgb(0 0 0/0.1);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+}
+body{background:var(--bg);color:var(--text);min-height:100vh}
+button{cursor:pointer;font:inherit}
+input,select{font:inherit}
+
+/* Login */
+#loginScreen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#1e293b 0%,#334155 100%)}
+.login-card{background:var(--surface);border-radius:12px;padding:40px;width:400px;max-width:90vw;box-shadow:0 20px 60px rgb(0 0 0/0.3)}
+.login-card h1{text-align:center;font-size:22px;margin-bottom:4px;color:#1e293b}
+.login-card .subtitle{text-align:center;font-size:13px;color:var(--text-secondary);margin-bottom:28px}
+.login-card .form-group{margin-bottom:16px}
+.login-card label{display:block;font-size:13px;font-weight:600;margin-bottom:4px;color:var(--text)}
+.login-card input{width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;outline:none;transition:border-color .15s}
+.login-card input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-light)}
+.login-card .btn{width:100%;padding:10px;font-size:15px;font-weight:600;border:none;border-radius:var(--radius);margin-top:8px}
+.login-error{color:var(--danger);font-size:13px;margin-top:8px;display:none}
+
+/* Main Layout */
+#mainLayout{display:none;min-height:100vh}
+#sidebar{position:fixed;top:0;left:0;width:240px;height:100vh;background:var(--sidebar-bg);display:flex;flex-direction:column;z-index:100;overflow-y:auto}
+.sidebar-brand{padding:20px 20px 6px;font-size:17px;font-weight:700;color:#fff}
+.sidebar-subtitle{font-size:12px;color:var(--sidebar-text);padding:0 20px 16px}
+.sidebar-nav{list-style:none;flex:1;padding:8px 0}
+.sidebar-nav li{padding:8px 20px;font-size:13px;color:var(--sidebar-text);cursor:pointer;transition:background .15s;display:flex;align-items:center;gap:6px}
+.sidebar-nav li:hover{background:rgb(255 255 255/0.06)}
+.sidebar-nav li.active{background:var(--sidebar-active);color:#fff}
+.sidebar-nav .nav-divider{padding:4px 20px;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#475569;margin-top:4px}
+.sidebar-footer{padding:16px 20px;border-top:1px solid rgb(255 255 255/0.08);font-size:13px;color:var(--sidebar-text);flex-shrink:0}
+.sidebar-footer button{display:block;width:100%;margin-top:8px;padding:6px 0;background:rgb(255 255 255/0.08);color:#e2e8f0;border:1px solid rgb(255 255 255/0.12);border-radius:6px;font-size:13px;transition:background .15s}
+.sidebar-footer button:hover{background:rgb(255 255 255/0.15)}
+
+/* Content */
+#content{margin-left:240px;padding:24px}
+#statsBar{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+.stat-card{background:var(--surface);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);display:flex;align-items:center;gap:12px}
+.stat-card .stat-icon{width:40px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.stat-card .stat-icon.blue{background:var(--primary-light);color:var(--primary)}
+.stat-card .stat-icon.green{background:var(--success-light);color:var(--success)}
+.stat-card .stat-icon.amber{background:var(--warning-light);color:var(--warning)}
+.stat-card .stat-icon.purple{background:#ede9fe;color:#7c3aed}
+.stat-card .stat-info{display:flex;flex-direction:column}
+.stat-card .stat-info span{font-size:11px;color:var(--text-secondary)}
+.stat-card .stat-info strong{font-size:20px;font-weight:700}
+
+/* Tab content */
+.tab-header{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap}
+.tab-header h2{font-size:18px;flex:1;min-width:120px}
+.tab-header select{padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius);font-size:14px;background:var(--surface);min-width:180px}
+
+/* Cards */
+.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:20px}
+
+/* Tables */
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:8px 12px;font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;background:#f8fafc;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#f8fafc}
+
+/* Buttons */
+.btn{padding:8px 16px;font-size:13px;font-weight:600;border:none;border-radius:6px;transition:all .15s;display:inline-flex;align-items:center;gap:4px}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:#1d4ed8}
+.btn-danger{background:var(--danger);color:#fff}
+.btn-danger:hover{background:#b91c1c}
+.btn-secondary{background:#f1f5f9;color:var(--text);border:1px solid var(--border)}
+.btn-secondary:hover{background:#e2e8f0}
+.btn-sm{padding:4px 8px;font-size:11px}
+.btn-ghost{padding:4px 8px;font-size:11px;background:transparent;color:var(--primary);border:none;white-space:nowrap}
+.btn-ghost:hover{background:var(--primary-light)}
+.btn-ghost.danger{color:var(--danger)}
+.btn-ghost.danger:hover{background:var(--danger-light)}
+
+/* Badges */
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap}
+.badge-active{background:var(--success-light);color:var(--success)}
+.badge-suspended{background:var(--warning-light);color:var(--warning)}
+.badge-disabled{background:var(--danger-light);color:var(--danger)}
+.badge-director{background:#ede9fe;color:#7c3aed}
+.badge-caregiver{background:var(--primary-light);color:var(--primary)}
+.badge-family{background:#fce7f3;color:#db2777}
+.badge-male{background:#dbeafe;color:#2563eb}
+.badge-female{background:#fce7f3;color:#db2777}
+.badge-default{background:#f1f5f9;color:#64748b}
+
+/* Modals */
+.modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgb(0 0 0/0.5);z-index:200;align-items:center;justify-content:center}
+.modal-overlay.open{display:flex}
+.modal{background:var(--surface);border-radius:12px;width:480px;max-width:90vw;max-height:85vh;overflow-y:auto;box-shadow:0 20px 60px rgb(0 0 0/0.2)}
+.modal-header{display:flex;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border)}
+.modal-header h3{flex:1;font-size:16px}
+.modal-close{width:28px;height:28px;border:none;background:transparent;font-size:18px;color:var(--text-secondary);border-radius:6px;display:flex;align-items:center;justify-content:center}
+.modal-close:hover{background:#f1f5f9}
+.modal-body{padding:20px}
+.modal-footer{display:flex;justify-content:flex-end;gap:8px;padding:16px 20px;border-top:1px solid var(--border)}
+
+/* Forms */
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:13px;font-weight:600;margin-bottom:4px;color:var(--text)}
+.form-group input,.form-group select{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:14px;outline:none;transition:border-color .15s}
+.form-group input:focus,.form-group select:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-light)}
+.form-hint{font-size:12px;color:var(--text-secondary);margin-top:2px}
+
+/* Toast */
+#toastContainer{position:fixed;top:20px;right:20px;z-index:300;display:flex;flex-direction:column;gap:8px}
+.toast{padding:12px 20px;border-radius:8px;font-size:14px;font-weight:500;box-shadow:0 4px 12px rgb(0 0 0/0.2);animation:slideIn .25s ease;max-width:360px}
+.toast.success{background:var(--success);color:#fff}
+.toast.error{background:var(--danger);color:#fff}
+@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}
+
+.spinner{display:inline-block;width:18px;height:18px;border:2px solid #cbd5e1;border-top-color:var(--primary);border-radius:50%;animation:spin .6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty-state{text-align:center;padding:40px;color:var(--text-secondary);font-size:14px}
+td.actions{display:flex;gap:2px;flex-wrap:wrap}
+.storage-bar{width:100%;height:6px;background:#e2e8f0;border-radius:3px;margin-top:4px;overflow:hidden}
+.storage-bar-fill{height:100%;border-radius:3px;transition:width .3s}
+.storage-bar-fill.ok{background:var(--success)}
+.storage-bar-fill.warn{background:var(--warning)}
+.storage-bar-fill.full{background:var(--danger)}
+</style>
+</head>
+<body>
+
+<!-- ====== LOGIN SCREEN ====== -->
+<div id="loginScreen">
+  <div class="login-card">
+    <h1>Elder Serve</h1>
+    <p class="subtitle">开发者管理后台</p>
+    <form id="loginForm" autocomplete="off">
+      <div class="form-group"><label>用户名</label><input type="text" id="loginUsername" placeholder="请输入管理员账号" autocomplete="off"/></div>
+      <div class="form-group"><label>密码</label><input type="password" id="loginPassword" placeholder="请输入密码" autocomplete="off"/></div>
+      <div class="login-error" id="loginError"></div>
+      <button type="submit" class="btn btn-primary" id="loginBtn">登 录</button>
+    </form>
+  </div>
+</div>
+
+<!-- ====== MAIN LAYOUT ====== -->
+<div id="mainLayout">
+  <nav id="sidebar">
+    <div class="sidebar-brand">Elder Serve</div>
+    <div class="sidebar-subtitle" id="sidebarRole"></div>
+    <ul class="sidebar-nav">
+      <div class="nav-divider">系统管理</div>
+      <li class="active" data-tab="institutions">&#127970; 机构管理</li>
+      <li data-tab="users">&#128101; 用户管理</li>
+      <li data-tab="sessions">&#128172; 在线会话</li>
+      <li data-tab="appReleases">&#128230; APP版本</li>
+      <div class="nav-divider">运营数据</div>
+      <li data-tab="elders">&#128116; 老人档案</li>
+      <li data-tab="templates">&#128203; 日报模板</li>
+      <li data-tab="careRecords">&#128221; 护理记录</li>
+      <li data-tab="tasks">&#128204; 发布任务</li>
+    </ul>
+    <div class="sidebar-footer">
+      <div id="sidebarUsername"></div>
+      <button id="logoutBtn">退出登录</button>
+    </div>
+  </nav>
+
+  <div id="content">
+    <div id="statsBar">
+      <div class="stat-card"><div class="stat-icon blue">&#127970;</div><div class="stat-info"><span>机构数</span><strong id="statInstitutions">-</strong></div></div>
+      <div class="stat-card"><div class="stat-icon green">&#128101;</div><div class="stat-info"><span>用户数</span><strong id="statUsers">-</strong></div></div>
+      <div class="stat-card"><div class="stat-icon purple">&#128116;</div><div class="stat-info"><span>老人数</span><strong id="statElders">-</strong></div></div>
+      <div class="stat-card"><div class="stat-icon amber">&#128190;</div><div class="stat-info"><span>存储用量</span><strong id="statStorage">-</strong></div></div>
+    </div>
+
+    <!-- Institutions Tab -->
+    <div id="tabInstitutions" class="card">
+      <div class="tab-header" style="padding:16px 20px"><h2>机构列表</h2><button class="btn btn-primary" id="btnCreateInstitution">+ 注册新机构</button></div>
+      <div class="table-wrap"><table id="institutionsTable"><thead><tr><th>机构名称</th><th>机构 ID</th><th>状态</th><th>用户数</th><th>存储用量</th><th>操作</th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <!-- Users Tab -->
+    <div id="tabUsers" class="card" style="display:none">
+      <div class="tab-header" style="padding:16px 20px"><h2>用户列表</h2><select id="userInstitutionSelect"><option value="">-- 选择机构 --</option></select><button class="btn btn-primary" id="btnCreateUser">+ 添加用户</button></div>
+      <div class="table-wrap"><table id="usersTable"><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <!-- Elders Tab -->
+    <div id="tabElders" class="card" style="display:none">
+      <div class="tab-header" style="padding:16px 20px"><h2>老人档案</h2><select id="elderInstitutionSelect"><option value="">-- 全部机构 --</option></select></div>
+      <div class="table-wrap"><table id="eldersTable"><thead><tr><th>姓名</th><th>性别</th><th>年龄</th><th>楼层</th><th>房间</th><th>床位</th><th>机构</th><th>紧急联系人</th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <!-- Templates Tab -->
+    <div id="tabTemplates" class="card" style="display:none">
+      <div class="tab-header" style="padding:16px 20px"><h2>日报模板</h2><select id="templateInstitutionSelect"><option value="">-- 全部机构 --</option></select></div>
+      <div class="table-wrap"><table id="templatesTable"><thead><tr><th>标题</th><th>机构</th><th>版本</th><th>来源</th><th>更新者</th><th>更新时间</th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <!-- Care Records Tab -->
+    <div id="tabCareRecords" class="card" style="display:none">
+      <div class="tab-header" style="padding:16px 20px"><h2>护理记录</h2><select id="crInstitutionSelect"><option value="">-- 全部机构 --</option></select><input type="text" id="crElderSearch" placeholder="搜索老人姓名..." style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:14px;width:160px"/></div>
+      <div class="table-wrap"><table id="careRecordsTable"><thead><tr><th>老人</th><th>房间</th><th>护工</th><th>日期</th><th>护理类型</th><th>状态</th><th>机构</th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <!-- Tasks Tab -->
+    <div id="tabTasks" class="card" style="display:none">
+      <div class="tab-header" style="padding:16px 20px"><h2>发布任务</h2><select id="taskInstitutionSelect"><option value="">-- 全部机构 --</option></select><input type="text" id="taskElderSearch" placeholder="搜索老人姓名..." style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:14px;width:160px"/></div>
+      <div class="table-wrap"><table id="tasksTable"><thead><tr><th>任务标题</th><th>老人</th><th>护工</th><th>楼层/房间</th><th>状态</th><th>日期</th><th>分类</th><th>异常</th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <!-- Sessions Tab -->
+    <div id="tabSessions" class="card" style="display:none">
+      <div class="tab-header" style="padding:16px 20px"><h2>在线会话</h2><button class="btn btn-secondary btn-sm" id="btnRefreshSessions">刷新</button><button class="btn btn-danger btn-sm" id="btnCleanupSessions">清理过期/已踢出</button></div>
+      <div class="table-wrap"><table id="sessionsTable"><thead><tr><th>用户</th><th>角色</th><th>机构</th><th>登录时间</th><th>过期时间</th><th>状态</th><th>操作</th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <!-- App Releases Tab -->
+    <div id="tabAppReleases" class="card" style="display:none">
+      <div class="tab-header" style="padding:16px 20px"><h2>APP 发布记录</h2></div>
+      <div class="table-wrap"><table id="appReleasesTable"><thead><tr><th>版本</th><th>平台</th><th>渠道</th><th>大小</th><th>SHA256</th><th>强制更新</th><th>发布时间</th><th>备注</th></tr></thead><tbody></tbody></table></div>
+    </div>
+  </div>
+</div>
+
+<!-- ====== MODALS ====== -->
+
+<!-- Create Institution -->
+<div class="modal-overlay" id="modalCreateInstitution">
+  <div class="modal">
+    <div class="modal-header"><h3>注册新机构</h3><button class="modal-close" data-close="modalCreateInstitution">&times;</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>机构 ID <span style="color:var(--danger)">*</span></label><input type="text" id="ciId" placeholder="例如：xinhu-care"/></div>
+      <div class="form-group"><label>机构名称</label><input type="text" id="ciName" placeholder="例如：新华镇颐养护理院"/></div>
+      <div class="form-group"><label>存储配额 (MB)</label><input type="number" id="ciQuota" value="0" min="0"/><div class="form-hint">0 表示不限制</div></div>
+      <div class="form-group"><label>院长用户名 <span style="color:var(--danger)">*</span></label><input type="text" id="ciAdminUsername" placeholder="首位院长的登录名"/></div>
+      <div class="form-group"><label>院长密码 <span style="color:var(--danger)">*</span></label><input type="password" id="ciAdminPassword" placeholder="至少 8 位"/></div>
+      <div class="login-error" id="ciError"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" data-close="modalCreateInstitution">取消</button><button class="btn btn-primary" id="ciSubmit">确认注册</button></div>
+  </div>
+</div>
+
+<!-- Adjust Quota -->
+<div class="modal-overlay" id="modalQuota">
+  <div class="modal">
+    <div class="modal-header"><h3>调整存储配额</h3><button class="modal-close" data-close="modalQuota">&times;</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>机构</label><input type="text" id="qInstName" disabled/></div>
+      <div class="form-group"><label>当前已用</label><input type="text" id="qUsed" disabled/></div>
+      <div class="form-group"><label>新配额 (MB)</label><input type="number" id="qQuota" value="0" min="0"/><div class="form-hint">0 表示不限制</div></div>
+      <div class="login-error" id="qError"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" data-close="modalQuota">取消</button><button class="btn btn-primary" id="qSubmit">保存</button></div>
+  </div>
+</div>
+
+<!-- Create User -->
+<div class="modal-overlay" id="modalCreateUser">
+  <div class="modal">
+    <div class="modal-header"><h3>添加用户</h3><button class="modal-close" data-close="modalCreateUser">&times;</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>机构</label><input type="text" id="cuInstName" disabled/></div>
+      <div class="form-group"><label>用户名 <span style="color:var(--danger)">*</span></label><input type="text" id="cuUsername" placeholder="登录名（机构内唯一）"/></div>
+      <div class="form-group"><label>密码 <span style="color:var(--danger)">*</span></label><input type="password" id="cuPassword" placeholder="至少 8 位"/></div>
+      <div class="form-group"><label>显示名称</label><input type="text" id="cuDisplayName" placeholder="可选"/></div>
+      <div class="form-group"><label>角色</label><select id="cuRole"><option value="caregiver">护工</option><option value="family">家属</option><option value="director">院长</option></select></div>
+      <div class="form-group"><label>关联实体 ID</label><input type="text" id="cuRoleEntityId" placeholder="例如护工 caregiver ID 或老人 elder ID"/></div>
+      <div class="login-error" id="cuError"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" data-close="modalCreateUser">取消</button><button class="btn btn-primary" id="cuSubmit">确认添加</button></div>
+  </div>
+</div>
+
+<!-- Reset Password -->
+<div class="modal-overlay" id="modalResetPassword">
+  <div class="modal">
+    <div class="modal-header"><h3>重置用户密码</h3><button class="modal-close" data-close="modalResetPassword">&times;</button></div>
+    <div class="modal-body">
+      <div class="form-group"><label>用户</label><input type="text" id="rpUsername" disabled/></div>
+      <div class="form-group"><label>新密码 <span style="color:var(--danger)">*</span></label><input type="password" id="rpPassword" placeholder="至少 8 位"/></div>
+      <div class="login-error" id="rpError"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" data-close="modalResetPassword">取消</button><button class="btn btn-primary" id="rpSubmit">确认重置</button></div>
+  </div>
+</div>
+
+<!-- Template Detail -->
+<div class="modal-overlay" id="modalTemplateDetail">
+  <div class="modal" style="width:700px">
+    <div class="modal-header"><h3 id="tdTitle">模板详情</h3><button class="modal-close" data-close="modalTemplateDetail">&times;</button></div>
+    <div class="modal-body">
+      <div style="margin-bottom:12px"><span style="font-size:12px;color:var(--text-secondary)">机构：</span><code id="tdInstId"></code> <span style="font-size:12px;color:var(--text-secondary);margin-left:12px">版本：</span><span id="tdVersion"></span> <span style="font-size:12px;color:var(--text-secondary);margin-left:12px">来源：</span><span id="tdSource"></span></div>
+      <pre id="tdContent" style="background:#f8fafc;border:1px solid var(--border);border-radius:6px;padding:16px;overflow:auto;max-height:50vh;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all"></pre>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" data-close="modalTemplateDetail">关闭</button></div>
+  </div>
+</div>
+
+<div id="toastContainer"></div>
+
+<script>
+(function(){
+var S = {
+  token: null,
+  user: null,
+  institutions: [],
+  currentTab: "institutions",
+  selectedInstId: null,
+  quotaInstId: null,
+  resetUserId: null,
+  resetUserInstId: null
+};
+
+/* ====== API ====== */
+async function api(method, path, body) {
+  var headers = { "Content-Type": "application/json" };
+  if (S.token) headers["Authorization"] = "Bearer " + S.token;
+  var opts = { method: method, headers: headers };
+  if (body) opts.body = JSON.stringify(body);
+  var res = await fetch(path, opts);
+  var data;
+  try { data = await res.json(); } catch(_) { data = {}; }
+  if (!res.ok) {
+    if (res.status === 401) { clearAuth(); showLogin(); throw new Error("会话已过期，请重新登录"); }
+    throw new Error(data.detail || "HTTP " + res.status);
+  }
+  return data;
+}
+
+/* ====== AUTH ====== */
+function clearAuth() {
+  S.token = null; S.user = null;
+  localStorage.removeItem("elderAdminToken");
+}
+function showLogin() {
+  document.getElementById("loginScreen").style.display = "flex";
+  document.getElementById("mainLayout").style.display = "none";
+}
+function showDashboard() {
+  document.getElementById("loginScreen").style.display = "none";
+  document.getElementById("mainLayout").style.display = "flex";
+  document.getElementById("sidebarUsername").textContent = S.user ? S.user.username : "";
+  document.getElementById("sidebarRole").textContent = S.user && S.user.role === "superadmin" ? "超级管理员" : "管理员";
+}
+async function verifyToken() {
+  try {
+    var stats = await api("GET", "/api/admin/stats");
+    S.user = { username: "admin", role: "superadmin" };
+    showDashboard();
+    renderStats(stats);
+    loadInstitutions();
+  } catch(e) { showLogin(); }
+}
+async function doLogin(username, password) {
+  var result = await api("POST", "/api/admin/login", { institutionId: "", username: username, password: password });
+  if (result.status !== "success") throw new Error(result.detail || "登录失败");
+  S.token = result.token;
+  S.user = result.user;
+  localStorage.setItem("elderAdminToken", result.token);
+  showDashboard();
+  var stats = await api("GET", "/api/admin/stats");
+  renderStats(stats);
+  loadInstitutions();
+}
+
+/* ====== UI HELPERS ====== */
+function escHtml(str) { return String(str || "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function formatBytes(bytes) {
+  bytes = Number(bytes || 0);
+  if (!bytes) return "0 B";
+  if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + " GB";
+  if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + " MB";
+  if (bytes >= 1024) return Math.round(bytes / 1024) + " KB";
+  return bytes + " B";
+}
+function formatDate(iso) { if (!iso) return "-"; return iso.slice(0, 10) + " " + iso.slice(11, 16); }
+function roleBadge(role) {
+  var map = { director: "badge-director", caregiver: "badge-caregiver", family: "badge-family", admin: "badge-director", superadmin: "badge-director" };
+  var label = { director: "院长", caregiver: "护工", family: "家属", admin: "管理员", superadmin: "超管" };
+  return '<span class="badge ' + (map[role] || "") + '">' + (label[role] || role) + '</span>';
+}
+function statusBadge(status) {
+  if (status === "active") return '<span class="badge badge-active">正常</span>';
+  if (status === "suspended") return '<span class="badge badge-suspended">已暂停</span>';
+  if (status === "disabled") return '<span class="badge badge-disabled">已禁用</span>';
+  return '<span class="badge">' + escHtml(status) + '</span>';
+}
+function storageBar(used, quota) {
+  if (!quota || quota === 0) return formatBytes(used) + " / 无限制";
+  var pct = Math.min(100, Math.round(used / quota * 100));
+  var cls = pct >= 90 ? "full" : pct >= 70 ? "warn" : "ok";
+  return formatBytes(used) + " / " + formatBytes(quota) + '<div class="storage-bar"><div class="storage-bar-fill ' + cls + '" style="width:' + pct + '%"></div></div>';
+}
+function toast(msg, type) {
+  var c = document.getElementById("toastContainer");
+  var el = document.createElement("div");
+  el.className = "toast " + (type || "success");
+  el.textContent = msg;
+  c.appendChild(el);
+  setTimeout(function(){ el.remove(); }, 3000);
+}
+function showModal(id) { document.getElementById(id).classList.add("open"); }
+function hideModal(id) { document.getElementById(id).classList.remove("open"); }
+function showInlineErr(id, msg) {
+  var el = document.getElementById(id);
+  el.textContent = msg;
+  el.style.display = "block";
+}
+
+/* ====== RENDER ====== */
+function renderStats(stats) {
+  document.getElementById("statInstitutions").textContent = stats.institutionCount || 0;
+  document.getElementById("statUsers").textContent = stats.userCount || 0;
+  document.getElementById("statElders").textContent = stats.elderCount || 0;
+  document.getElementById("statStorage").textContent = formatBytes(stats.totalStorageUsedBytes || 0);
+}
+
+function renderInstitutionsTable(list) {
+  S.institutions = list || [];
+  var tbody = document.querySelector("#institutionsTable tbody");
+  if (!S.institutions.length) { tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state">暂无机构数据</div></td></tr>'; return; }
+  tbody.innerHTML = S.institutions.map(function(inst){
+    var suspLabel = inst.status === "suspended" ? "恢复服务" : "暂停服务";
+    var suspCls = inst.status === "suspended" ? "success" : "danger";
+    return '<tr>' +
+      '<td><strong>' + escHtml(inst.name || "未命名") + '</strong></td>' +
+      '<td><code>' + escHtml(inst.id) + '</code></td>' +
+      '<td>' + statusBadge(inst.status) + '</td>' +
+      '<td>' + (inst.userCount || 0) + '</td>' +
+      '<td style="min-width:180px">' + storageBar(inst.storageUsedBytes || 0, inst.storageQuotaBytes || 0) + '</td>' +
+      '<td class="actions">' +
+        '<button class="btn-ghost" data-action="quota" data-id="' + escHtml(inst.id) + '" data-name="' + escHtml(inst.name || "") + '" data-used="' + (inst.storageUsedBytes||0) + '" data-quota="' + (inst.storageQuotaBytes||0) + '">配额</button>' +
+        '<button class="btn-ghost ' + suspCls + '" data-action="suspend" data-id="' + escHtml(inst.id) + '" data-name="' + escHtml(inst.name || "") + '">' + suspLabel + '</button>' +
+      '</td></tr>';
+  }).join("");
+}
+
+function renderUsersTable(users) {
+  var tbody = document.querySelector("#usersTable tbody");
+  if (!users || !users.length) { tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state">暂无用户数据，请先选择机构</div></td></tr>'; return; }
+  tbody.innerHTML = users.map(function(u){
+    var disLabel = u.status === "disabled" ? "启用" : "禁用";
+    var disCls = u.status === "disabled" ? "success" : "danger";
+    return '<tr>' +
+      '<td><strong>' + escHtml(u.username) + '</strong></td>' +
+      '<td>' + escHtml(u.displayName || "-") + '</td>' +
+      '<td>' + roleBadge(u.role) + '</td>' +
+      '<td>' + statusBadge(u.status) + '</td>' +
+      '<td>' + formatDate(u.createdAt) + '</td>' +
+      '<td class="actions">' +
+        '<button class="btn-ghost" data-action="reset-password" data-uid="' + escHtml(u.id) + '" data-uname="' + escHtml(u.username) + '">重置密码</button>' +
+        '<button class="btn-ghost ' + disCls + '" data-action="disable-user" data-uid="' + escHtml(u.id) + '" data-uname="' + escHtml(u.username) + '">' + disLabel + '</button>' +
+      '</td></tr>';
+  }).join("");
+}
+
+function renderEldersTable(elders) {
+  var tbody = document.querySelector("#eldersTable tbody");
+  if (!elders || !elders.length) { tbody.innerHTML = '<tr><td colspan="8"><div class="empty-state">暂无老人数据</div></td></tr>'; return; }
+  tbody.innerHTML = elders.map(function(e){
+    return '<tr>' +
+      '<td><strong>' + escHtml(e.name || "-") + '</strong></td>' +
+      '<td>' + (e.gender === "男" ? '<span class="badge badge-male">男</span>' : e.gender === "女" ? '<span class="badge badge-female">女</span>' : '<span class="badge badge-default">' + escHtml(e.gender||"-") + '</span>') + '</td>' +
+      '<td>' + (e.age || "-") + '</td>' +
+      '<td>' + escHtml(e.floor || "-") + '</td>' +
+      '<td>' + escHtml(e.room || "-") + '</td>' +
+      '<td>' + escHtml(e.bed || "-") + '</td>' +
+      '<td><code>' + escHtml(e.institutionId || "-") + '</code></td>' +
+      '<td>' + escHtml(e.emergencyContact || "-") + '</td>' +
+      '</tr>';
+  }).join("");
+}
+
+function renderTemplatesTable(list) {
+  var tbody = document.querySelector("#templatesTable tbody");
+  if (!list || !list.length) { tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state">暂无模板数据</div></td></tr>'; return; }
+  tbody.innerHTML = list.map(function(t){
+    return '<tr style="cursor:pointer" data-action="view-template" data-id="' + escHtml(t.id) + '" data-title="' + escHtml(t.title || '未命名') + '">' +
+      '<td><strong style="color:var(--primary)">' + escHtml(t.title || "未命名") + '</strong></td>' +
+      '<td><code>' + escHtml(t.institutionId || "-") + '</code></td>' +
+      '<td>v' + (t.version || 0) + '</td>' +
+      '<td>' + escHtml(t.source || "-") + '</td>' +
+      '<td>' + escHtml(t.updatedBy || "-") + '</td>' +
+      '<td>' + formatDate(t.updatedAt) + '</td>' +
+      '</tr>';
+  }).join("");
+}
+
+function renderCareRecordsTable(list) {
+  var tbody = document.querySelector("#careRecordsTable tbody");
+  if (!list || !list.length) { tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state">暂无护理记录</div></td></tr>'; return; }
+  tbody.innerHTML = list.map(function(r){
+    return '<tr>' +
+      '<td>' + escHtml(r.elderName || "-") + '</td>' +
+      '<td>' + escHtml(r.room || "-") + '</td>' +
+      '<td>' + escHtml(r.caregiverName || "-") + '</td>' +
+      '<td>' + formatDate(r.recordDate) + '</td>' +
+      '<td>' + escHtml(r.careType || "-") + '</td>' +
+      '<td>' + statusBadge(r.workflowStatus) + '</td>' +
+      '<td><code>' + escHtml(r.institutionId || "-") + '</code></td>' +
+      '</tr>';
+  }).join("");
+}
+
+function renderTasksTable(list) {
+  var tbody = document.querySelector("#tasksTable tbody");
+  if (!list || !list.length) { tbody.innerHTML = '<tr><td colspan="8"><div class="empty-state">暂无任务数据</div></td></tr>'; return; }
+  tbody.innerHTML = list.map(function(t){
+    var exc = t.exceptionType ? '<span class="badge badge-suspended">' + escHtml(t.exceptionType) + '</span>' : '<span class="badge badge-active">-</span>';
+    return '<tr>' +
+      '<td><strong>' + escHtml(t.title || "未命名") + '</strong></td>' +
+      '<td>' + escHtml(t.elderName || "-") + '</td>' +
+      '<td>' + escHtml(t.caregiverName || "-") + '</td>' +
+      '<td>' + escHtml(t.elderFloor || "") + ' ' + escHtml(t.elderRoom || "") + '</td>' +
+      '<td>' + statusBadge(t.status) + '</td>' +
+      '<td>' + formatDate(t.recordDate) + '</td>' +
+      '<td>' + escHtml(t.category || "-") + '</td>' +
+      '<td>' + exc + '</td>' +
+      '</tr>';
+  }).join("");
+}
+
+function renderSessionsTable(list) {
+  var tbody = document.querySelector("#sessionsTable tbody");
+  if (!list || !list.length) { tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state">暂无活跃会话</div></td></tr>'; return; }
+  tbody.innerHTML = list.map(function(s){
+    var isRevoked = s.revoked;
+    var now = new Date().toISOString();
+    var isExpired = s.expiresAt < now;
+    var badge;
+    if (isRevoked) badge = '<span class="badge badge-disabled">已踢出</span>';
+    else if (isExpired) badge = '<span class="badge badge-default">已过期</span>';
+    else badge = '<span class="badge badge-active">在线</span>';
+    var canAct = !isRevoked && !isExpired;
+    return '<tr>' +
+      '<td><strong>' + escHtml(s.username || s.displayName || "-") + '</strong></td>' +
+      '<td>' + roleBadge(s.role) + '</td>' +
+      '<td><code>' + escHtml(s.institutionId || "-") + '</code></td>' +
+      '<td>' + formatDate(s.createdAt) + '</td>' +
+      '<td>' + formatDate(s.expiresAt) + '</td>' +
+      '<td>' + badge + '</td>' +
+      '<td class="actions">' + (canAct ? '<button class="btn-ghost danger" data-action="revoke-session" data-token="' + escHtml(s.token) + '" data-user="' + escHtml(s.username||s.displayName) + '">踢出</button>' : '') + '</td>' +
+      '</tr>';
+  }).join("");
+}
+
+function renderAppReleasesTable(list) {
+  var tbody = document.querySelector("#appReleasesTable tbody");
+  if (!list || !list.length) { tbody.innerHTML = '<tr><td colspan="8"><div class="empty-state">暂无发布记录</div></td></tr>'; return; }
+  tbody.innerHTML = list.map(function(r){
+    var force = r.forceUpdate === "true" ? '<span class="badge badge-suspended">强制</span>' : '<span class="badge badge-active">否</span>';
+    return '<tr>' +
+      '<td><strong>v' + escHtml(r.versionName) + '</strong> <span style="color:var(--text-secondary);font-size:11px">(' + r.versionCode + ')</span></td>' +
+      '<td>' + escHtml(r.platform || "-") + '</td>' +
+      '<td>' + escHtml(r.channel || "-") + '</td>' +
+      '<td>' + formatBytes(r.sizeBytes) + '</td>' +
+      '<td><code style="font-size:11px">' + escHtml(r.sha256 || "-") + '</code></td>' +
+      '<td>' + force + '</td>' +
+      '<td>' + formatDate(r.createdAt) + '</td>' +
+      '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(r.releaseNotes || "-") + '</td>' +
+      '</tr>';
+  }).join("");
+}
+
+function populateInstitutionSelect(selId, allOption) {
+  var sel = document.getElementById(selId);
+  sel.innerHTML = (allOption || '<option value="">-- 全部机构 --</option>') +
+    S.institutions.map(function(i){ return '<option value="' + escHtml(i.id) + '">' + escHtml(i.name || i.id) + '</option>'; }).join("");
+}
+
+/* ====== TAB SWITCHING ====== */
+var tabConfig = {
+  institutions: { load: loadInstitutions },
+  users: { load: function(){ populateInstitutionSelect("userInstitutionSelect", '<option value="">-- 选择机构 --</option>'); if(S.selectedInstId) loadUsers(S.selectedInstId); } },
+  elders: { load: function(){ populateInstitutionSelect("elderInstitutionSelect"); loadElders(); } },
+  templates: { load: function(){ populateInstitutionSelect("templateInstitutionSelect"); loadTemplates(); } },
+  careRecords: { load: function(){ populateInstitutionSelect("crInstitutionSelect"); loadCareRecords(); } },
+  tasks: { load: function(){ populateInstitutionSelect("taskInstitutionSelect"); loadTasks(); } },
+  sessions: { load: loadSessions },
+  appReleases: { load: loadAppReleases }
+};
+
+function switchTab(name) {
+  S.currentTab = name;
+  Object.keys(tabConfig).forEach(function(k){
+    document.getElementById("tab" + k.charAt(0).toUpperCase() + k.slice(1)).style.display = k === name ? "" : "none";
+  });
+  var cfg = tabConfig[name];
+  if (cfg && cfg.load) cfg.load();
+}
+
+/* ====== DATA LOADING ====== */
+async function loadInstitutions() {
+  try {
+    var list = await api("GET", "/api/admin/institutions");
+    renderInstitutionsTable(list);
+    var stats = await api("GET", "/api/admin/stats");
+    renderStats(stats);
+  } catch(e) { toast(e.message, "error"); }
+}
+
+async function loadUsers(instId) {
+  try {
+    var users = await api("GET", "/api/admin/institutions/" + encodeURIComponent(instId) + "/users");
+    renderUsersTable(users);
+  } catch(e) { toast(e.message, "error"); }
+}
+
+async function loadElders() {
+  try {
+    var instId = document.getElementById("elderInstitutionSelect").value;
+    var elders = await api("GET", "/api/admin/elders" + (instId ? "?institutionId=" + encodeURIComponent(instId) : ""));
+    renderEldersTable(elders);
+  } catch(e) { toast(e.message, "error"); }
+}
+
+async function loadTemplates() {
+  try {
+    var instId = document.getElementById("templateInstitutionSelect").value;
+    var list = await api("GET", "/api/admin/report-templates" + (instId ? "?institutionId=" + encodeURIComponent(instId) : ""));
+    renderTemplatesTable(list);
+  } catch(e) { toast(e.message, "error"); }
+}
+
+async function loadCareRecords() {
+  try {
+    var instId = document.getElementById("crInstitutionSelect").value;
+    var elder = document.getElementById("crElderSearch").value.trim();
+    var params = "?limit=100";
+    if (instId) params += "&institutionId=" + encodeURIComponent(instId);
+    if (elder) params += "&elderName=" + encodeURIComponent(elder);
+    var list = await api("GET", "/api/admin/care-records" + params);
+    renderCareRecordsTable(list);
+  } catch(e) { toast(e.message, "error"); }
+}
+
+async function loadTasks() {
+  try {
+    var instId = document.getElementById("taskInstitutionSelect").value;
+    var elder = document.getElementById("taskElderSearch").value.trim();
+    var params = "?limit=100";
+    if (instId) params += "&institutionId=" + encodeURIComponent(instId);
+    if (elder) params += "&elderName=" + encodeURIComponent(elder);
+    var list = await api("GET", "/api/admin/published-tasks" + params);
+    renderTasksTable(list);
+  } catch(e) { toast(e.message, "error"); }
+}
+
+async function loadSessions() {
+  try {
+    var list = await api("GET", "/api/admin/sessions");
+    renderSessionsTable(list);
+  } catch(e) { toast(e.message, "error"); }
+}
+
+async function loadAppReleases() {
+  try {
+    var list = await api("GET", "/api/admin/app-releases");
+    renderAppReleasesTable(list);
+  } catch(e) { toast(e.message, "error"); }
+}
+
+/* ====== EVENT HANDLERS ====== */
+
+// Login
+document.getElementById("loginForm").addEventListener("submit", function(e){
+  e.preventDefault();
+  var username = document.getElementById("loginUsername").value.trim();
+  var password = document.getElementById("loginPassword").value;
+  var errEl = document.getElementById("loginError");
+  var btn = document.getElementById("loginBtn");
+  if (!username || !password) { errEl.textContent = "请输入用户名和密码"; errEl.style.display = "block"; return; }
+  errEl.style.display = "none";
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 登录中...';
+  doLogin(username, password).catch(function(err){
+    errEl.textContent = err.message || "登录失败";
+    errEl.style.display = "block";
+  }).finally(function(){ btn.disabled = false; btn.textContent = "登 录"; });
+});
+
+// Logout
+document.getElementById("logoutBtn").addEventListener("click", function(){ clearAuth(); showLogin(); toast("已退出登录"); });
+
+// Sidebar tabs
+document.querySelectorAll(".sidebar-nav li[data-tab]").forEach(function(li){
+  li.addEventListener("click", function(){
+    document.querySelectorAll(".sidebar-nav li[data-tab]").forEach(function(l){ l.classList.remove("active"); });
+    li.classList.add("active");
+    switchTab(li.dataset.tab);
+  });
+});
+
+// Modal close
+document.addEventListener("click", function(e){
+  if (e.target.dataset.close) { hideModal(e.target.dataset.close); return; }
+  if (e.target.classList.contains("modal-overlay") && e.target.classList.contains("open")) { hideModal(e.target.id); }
+});
+
+// Institution table actions
+document.getElementById("institutionsTable").addEventListener("click", function(e){
+  var btn = e.target.closest("[data-action]");
+  if (!btn) return;
+  var action = btn.dataset.action;
+  if (action === "quota") {
+    S.quotaInstId = btn.dataset.id;
+    document.getElementById("qInstName").value = btn.dataset.name;
+    document.getElementById("qUsed").value = formatBytes(Number(btn.dataset.used));
+    document.getElementById("qQuota").value = Math.round(Number(btn.dataset.quota) / 1048576);
+    showModal("modalQuota");
+  } else if (action === "suspend") {
+    if (!confirm("确定要 " + btn.textContent.trim() + " 机构「" + btn.dataset.name + "」吗？")) return;
+    api("PUT", "/api/admin/institutions/" + encodeURIComponent(btn.dataset.id) + "/suspend").then(function(r){
+      toast(btn.dataset.name + " 状态已变更: " + (r.institutionStatus || ""));
+      loadInstitutions();
+    }).catch(function(err){ toast(err.message, "error"); });
+  }
+});
+
+// Users table actions
+document.getElementById("usersTable").addEventListener("click", function(e){
+  var btn = e.target.closest("[data-action]");
+  if (!btn) return;
+  var action = btn.dataset.action;
+  var uid = btn.dataset.uid, uname = btn.dataset.uname;
+  if (action === "reset-password") {
+    S.resetUserId = uid; S.resetUserInstId = S.selectedInstId;
+    document.getElementById("rpUsername").value = uname;
+    document.getElementById("rpPassword").value = "";
+    document.getElementById("rpError").style.display = "none";
+    showModal("modalResetPassword");
+  } else if (action === "disable-user") {
+    if (!confirm("确定要 " + btn.textContent.trim() + " 用户「" + uname + "」吗？")) return;
+    api("PUT", "/api/admin/institutions/" + encodeURIComponent(S.selectedInstId) + "/users/" + encodeURIComponent(uid) + "/disable").then(function(r){
+      toast("用户「" + uname + "」状态已变更: " + (r.userStatus || ""));
+      loadUsers(S.selectedInstId);
+    }).catch(function(err){ toast(err.message, "error"); });
+  }
+});
+
+// Sessions table actions
+document.getElementById("sessionsTable").addEventListener("click", function(e){
+  var btn = e.target.closest("[data-action]");
+  if (!btn) return;
+  if (btn.dataset.action === "revoke-session") {
+    if (!confirm("确定要踢出用户「" + btn.dataset.user + "」吗？")) return;
+    api("DELETE", "/api/admin/sessions/" + btn.dataset.token).then(function(){
+      toast("会话已踢出");
+      loadSessions();
+    }).catch(function(err){ toast(err.message, "error"); });
+  }
+});
+
+// Institution selectors for data tabs
+document.getElementById("elderInstitutionSelect").addEventListener("change", loadElders);
+document.getElementById("templateInstitutionSelect").addEventListener("change", loadTemplates);
+document.getElementById("crInstitutionSelect").addEventListener("change", loadCareRecords);
+document.getElementById("taskInstitutionSelect").addEventListener("change", loadTasks);
+document.getElementById("userInstitutionSelect").addEventListener("change", function(){
+  S.selectedInstId = this.value;
+  if (!S.selectedInstId) { renderUsersTable([]); return; }
+  loadUsers(S.selectedInstId);
+});
+
+// Elder name search (debounced)
+var elderSearchTimers = {};
+function debounceElderSearch(key, fn) {
+  clearTimeout(elderSearchTimers[key]);
+  elderSearchTimers[key] = setTimeout(fn, 300);
+}
+document.getElementById("crElderSearch").addEventListener("input", function(){
+  debounceElderSearch("cr", loadCareRecords);
+});
+document.getElementById("taskElderSearch").addEventListener("input", function(){
+  debounceElderSearch("task", loadTasks);
+});
+
+// Refresh / Cleanup sessions
+document.getElementById("btnRefreshSessions").addEventListener("click", loadSessions);
+document.getElementById("btnCleanupSessions").addEventListener("click", function(){
+  if (!confirm("确定要清理所有过期和已踢出的会话吗？")) return;
+  api("POST", "/api/admin/sessions/cleanup").then(function(r){
+    toast("已清理 " + (r.deleted || 0) + " 条会话");
+    loadSessions();
+  }).catch(function(err){ toast(err.message, "error"); });
+});
+
+// Template table: click to view detail
+document.getElementById("templatesTable").addEventListener("click", function(e){
+  var row = e.target.closest("[data-action='view-template']");
+  if (!row) return;
+  var id = row.dataset.id;
+  var title = row.dataset.title;
+  document.getElementById("tdTitle").textContent = title;
+  document.getElementById("tdContent").textContent = "加载中...";
+  showModal("modalTemplateDetail");
+  api("GET", "/api/admin/report-templates/" + encodeURIComponent(id)).then(function(t){
+    document.getElementById("tdInstId").textContent = t.institutionId || "-";
+    document.getElementById("tdVersion").textContent = "v" + (t.version || 0);
+    document.getElementById("tdSource").textContent = t.source || "-";
+    document.getElementById("tdContent").textContent = JSON.stringify(t.template, null, 2);
+  }).catch(function(err){
+    document.getElementById("tdContent").textContent = "加载失败: " + err.message;
+  });
+});
+
+// Create Institution
+document.getElementById("btnCreateInstitution").addEventListener("click", function(){
+  document.getElementById("ciId").value = "";
+  document.getElementById("ciName").value = "";
+  document.getElementById("ciQuota").value = "0";
+  document.getElementById("ciAdminUsername").value = "";
+  document.getElementById("ciAdminPassword").value = "";
+  document.getElementById("ciError").style.display = "none";
+  showModal("modalCreateInstitution");
+});
+document.getElementById("ciSubmit").addEventListener("click", function(){
+  var payload = {
+    id: document.getElementById("ciId").value.trim(),
+    name: document.getElementById("ciName").value.trim(),
+    storageQuotaBytes: Number(document.getElementById("ciQuota").value || 0) * 1048576,
+    adminUsername: document.getElementById("ciAdminUsername").value.trim(),
+    adminPassword: document.getElementById("ciAdminPassword").value
+  };
+  if (!payload.id) { showInlineErr("ciError", "请输入机构 ID"); return; }
+  if (!payload.adminUsername) { showInlineErr("ciError", "请输入院长用户名"); return; }
+  if (!payload.adminPassword || payload.adminPassword.length < 8) { showInlineErr("ciError", "院长密码至少 8 位"); return; }
+  var btn = document.getElementById("ciSubmit");
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+  api("POST", "/api/admin/institutions", payload).then(function(r){
+    toast("机构「" + (payload.name || payload.id) + "」注册成功");
+    hideModal("modalCreateInstitution");
+    loadInstitutions();
+  }).catch(function(err){ showInlineErr("ciError", err.message); })
+    .finally(function(){ btn.disabled = false; btn.textContent = "确认注册"; });
+});
+
+// Quota
+document.getElementById("qSubmit").addEventListener("click", function(){
+  var bytes = Number(document.getElementById("qQuota").value || 0) * 1048576;
+  var btn = document.getElementById("qSubmit");
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+  api("PUT", "/api/admin/institutions/" + encodeURIComponent(S.quotaInstId) + "/quota", { storageQuotaBytes: bytes }).then(function(){
+    toast("配额已更新");
+    hideModal("modalQuota");
+    loadInstitutions();
+  }).catch(function(err){ showInlineErr("qError", err.message); })
+    .finally(function(){ btn.disabled = false; btn.textContent = "保存"; });
+});
+
+// Create User
+document.getElementById("btnCreateUser").addEventListener("click", function(){
+  if (!S.selectedInstId) { toast("请先选择一个机构", "error"); return; }
+  document.getElementById("cuInstName").value = S.selectedInstId;
+  document.getElementById("cuUsername").value = "";
+  document.getElementById("cuPassword").value = "";
+  document.getElementById("cuDisplayName").value = "";
+  document.getElementById("cuRole").value = "caregiver";
+  document.getElementById("cuRoleEntityId").value = "";
+  document.getElementById("cuError").style.display = "none";
+  showModal("modalCreateUser");
+});
+document.getElementById("cuSubmit").addEventListener("click", function(){
+  var payload = {
+    username: document.getElementById("cuUsername").value.trim(),
+    password: document.getElementById("cuPassword").value,
+    displayName: document.getElementById("cuDisplayName").value.trim(),
+    role: document.getElementById("cuRole").value,
+    roleEntityId: document.getElementById("cuRoleEntityId").value.trim()
+  };
+  if (!payload.username) { showInlineErr("cuError", "请输入用户名"); return; }
+  if (!payload.password || payload.password.length < 8) { showInlineErr("cuError", "密码至少 8 位"); return; }
+  var btn = document.getElementById("cuSubmit");
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+  api("POST", "/api/admin/institutions/" + encodeURIComponent(S.selectedInstId) + "/users", payload).then(function(){
+    toast("用户「" + payload.username + "」创建成功");
+    hideModal("modalCreateUser");
+    loadUsers(S.selectedInstId);
+  }).catch(function(err){ showInlineErr("cuError", err.message); })
+    .finally(function(){ btn.disabled = false; btn.textContent = "确认添加"; });
+});
+
+// Reset Password
+document.getElementById("rpSubmit").addEventListener("click", function(){
+  var pwd = document.getElementById("rpPassword").value;
+  if (!pwd || pwd.length < 8) { showInlineErr("rpError", "密码至少 8 位"); return; }
+  var btn = document.getElementById("rpSubmit");
+  btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+  api("POST", "/api/admin/institutions/" + encodeURIComponent(S.resetUserInstId) + "/users/" + encodeURIComponent(S.resetUserId) + "/reset-password", { password: pwd }).then(function(){
+    toast("密码已重置");
+    hideModal("modalResetPassword");
+  }).catch(function(err){ showInlineErr("rpError", err.message); })
+    .finally(function(){ btn.disabled = false; btn.textContent = "确认重置"; });
+});
+
+/* ====== INIT ====== */
+var token = localStorage.getItem("elderAdminToken");
+if (token) { S.token = token; verifyToken(); }
+else { showLogin(); }
+})();
+</script>
+</body>
+</html>

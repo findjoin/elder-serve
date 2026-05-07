@@ -149,6 +149,58 @@
   grid-column: 1 / -1;
 }
 
+.login-form {
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto;
+}
+
+.login-form__field {
+  margin-bottom: 16px;
+}
+
+.login-form__label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.login-form__input {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.login-form__input:focus {
+  border-color: var(--primary);
+}
+
+.login-form__error {
+  color: #e74c3c;
+  font-size: 13px;
+  margin-bottom: 12px;
+  text-align: center;
+}
+
+.login-form__submit {
+  margin-top: 8px;
+}
+
+.login-form__footnote {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 16px;
+}
+
 /* Remove instructional helper copy from the mobile UI. */
 .role-select-page__brand p,
 .role-select-page__hint,
@@ -5017,6 +5069,22 @@
   background: rgba(242, 169, 104, 0.2);
 }
 
+.director-timeline__dot--success {
+  border-color: var(--success);
+  background: rgba(144, 201, 119, 0.18);
+}
+
+.director-timeline__dot--muted {
+  border-color: #d8d8d8;
+  background: #f7f7f7;
+}
+
+.director-timeline__dot--overdue,
+.director-timeline__dot--error {
+  border-color: var(--error);
+  background: rgba(229, 115, 115, 0.16);
+}
+
 .director-timeline__card {
   width: 70%;
   padding: 16px;
@@ -5029,6 +5097,56 @@
 .director-timeline__card strong {
   display: block;
   margin-bottom: 6px;
+}
+
+.director-timeline__card-head--status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.director-timeline__card-head--status strong {
+  margin-bottom: 0;
+}
+
+.director-timeline__status {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.director-timeline__item--success .director-timeline__time,
+.director-timeline__item--success .director-timeline__card strong,
+.director-timeline__status--success {
+  color: var(--success);
+}
+
+.director-timeline__item--muted .director-timeline__time,
+.director-timeline__item--muted .director-timeline__card strong,
+.director-timeline__status--muted {
+  color: var(--text-sub);
+}
+
+.director-timeline__item--overdue .director-timeline__time,
+.director-timeline__item--overdue .director-timeline__card strong,
+.director-timeline__status--overdue,
+.director-timeline__item--error .director-timeline__time,
+.director-timeline__item--error .director-timeline__card strong,
+.director-timeline__status--error {
+  color: var(--error);
+}
+
+.director-timeline__card--overdue,
+.director-timeline__card--error {
+  border-color: rgba(229, 115, 115, 0.34);
+  background: rgba(229, 115, 115, 0.04);
+}
+
+.director-timeline__card--success {
+  border-color: rgba(144, 201, 119, 0.36);
+  background: rgba(144, 201, 119, 0.05);
 }
 
 .director-plan-timeline {
@@ -5680,6 +5798,13 @@
   font-weight: 800;
 }
 
+.director-exception-report__note {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--text-main);
+  line-height: 1.5;
+}
+
 .director-exception-report__photos img,
 .director-exception-report__photos span {
   width: 100%;
@@ -5701,6 +5826,46 @@
   color: var(--text-sub);
   font-size: 12px;
   text-align: center;
+}
+
+.director-exception-report__actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.director-read-exception-section {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 2px solid var(--border);
+}
+
+.director-read-exception-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.director-read-exception-section__head h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-sub);
+}
+
+.director-exception-report--read {
+  opacity: 0.65;
+}
+
+.button--danger {
+  background: #e53935;
+  color: #fff;
+  border: none;
+}
+
+.button--danger:active {
+  background: #b71c1c;
 }
 
 .director-collapse-entry summary {
