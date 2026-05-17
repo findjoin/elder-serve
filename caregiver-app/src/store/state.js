@@ -1127,6 +1127,19 @@ function setCloudCareReportsFetchedAt(timestamp = "") {
   state.cloud.careReportsFetchedAt = timestamp;
 }
 
+function getCachedCareReportsByDate(dateString = "") {
+  if (!dateString) return [];
+  const receivedByElder = new Map();
+  (state.cloud.careReports || []).forEach((item) => {
+    const recordDate = item.recordDate || String(item.submittedAt || item.updatedAt || "").slice(0, 10);
+    if (recordDate !== dateString) return;
+    const key = item.elderId || item.id;
+    if (!key || receivedByElder.has(key)) return;
+    receivedByElder.set(key, item);
+  });
+  return Array.from(receivedByElder.values());
+}
+
 async function downloadDirectorCareReports(filters = {}, options = {}) {
   const response = await fetchCareRecords({
     limit: filters.limit || 120,
@@ -3626,24 +3639,7 @@ export const actions = {
     if (!targetDate) return;
 
     state.ui.directorInboxExportDate = targetDate;
-    if (!isCloudSyncConfigured()) {
-      setCloudCareReportsError("云端接口未配置，无法下载日报数据");
-      notify();
-      return;
-    }
-
-    setCloudCareReportsLoading(true);
-    setCloudCareReportsError("");
     notify();
-
-    try {
-      await downloadDirectorCareReports({ recordDate: targetDate, limit: 200 });
-    } catch (error) {
-      setCloudCareReportsError(error?.message || "下载云端日报失败");
-    } finally {
-      setCloudCareReportsLoading(false);
-      notify();
-    }
   },
   closeDirectorInboxExport() {
     state.ui.directorInboxExportDate = "";
@@ -3653,37 +3649,18 @@ export const actions = {
     const targetDate = date || state.ui.directorInboxExportDate || state.ui.directorInboxSelectedDate;
     if (!targetDate) return;
 
-    if (!isCloudSyncConfigured()) {
-      setCloudCareReportsError("云端接口未配置，无法下载日报数据");
+    const cachedReports = getCachedCareReportsByDate(targetDate);
+    if (!cachedReports.length) {
+      touchToast("这一天缓存里没有日报，请先手动刷新云端");
       notify();
       return;
     }
 
-    setCloudCareReportsLoading(true);
-    setCloudCareReportsError("");
+    state.ui.directorCareRecordBatchDate = targetDate;
+    state.ui.directorCareRecordPreviewOpen = true;
+    state.ui.directorInboxExportDate = "";
+    state.ui.pendingCareRecordAction = mode === "image" ? "image" : "print";
     notify();
-
-    try {
-      const downloaded = await downloadDirectorCareReports({ recordDate: targetDate, limit: 200 });
-      const hasReports =
-        downloaded.length ||
-        state.cloud.careReports.some((item) => String(item.recordDate || item.submittedAt || "").startsWith(targetDate));
-
-      if (!hasReports) {
-        touchToast("这一天云端没有已收到的日报，不能导出");
-        return;
-      }
-
-      state.ui.directorCareRecordBatchDate = targetDate;
-      state.ui.directorCareRecordPreviewOpen = true;
-      state.ui.directorInboxExportDate = "";
-      state.ui.pendingCareRecordAction = mode === "image" ? "image" : "print";
-    } catch (error) {
-      setCloudCareReportsError(error?.message || "下载云端日报失败");
-    } finally {
-      setCloudCareReportsLoading(false);
-      notify();
-    }
   },
   async refreshDailyReportTemplate(options = {}) {
     return actions.refreshDailyReportTemplates(options);

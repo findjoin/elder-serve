@@ -558,11 +558,11 @@ function renderDirectorInboxExportDialog(state, selectors) {
           ${renderStatusPill(isLoading ? "下载中" : `云端 ${records.length} 份`, records.length ? "success" : "warning")}
         </div>
         <div class="director-inbox-export-modal__body">
-          <span>已从云端按日期下载日报数据。</span>
+          <span>使用当前已刷新到本机的日报数据。</span>
           ${
             records.length
               ? `<strong>${records.length} 份日报将合并为监管归档表导出。</strong>`
-              : `<strong>这一天还没有可导出的日报。</strong>`
+              : `<strong>这一天缓存里没有日报，请先手动刷新云端。</strong>`
           }
         </div>
         <div class="director-inbox-export-modal__actions">
