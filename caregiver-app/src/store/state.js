@@ -2229,6 +2229,17 @@ export const actions = {
     notify();
     actions.loadDirectorInitialData();
   },
+  openDevLogin() {
+    state.ui.loginMenuOpen = false;
+    state.ui.devLoginOpen = true;
+    state.ui.appInfoDialog = "";
+    state.ui.appUpdate.open = false;
+    notify();
+  },
+  closeDevLogin() {
+    state.ui.devLoginOpen = false;
+    notify();
+  },
   async _loadCloudInstitutionInfo(instId) {
     try {
       const resp = await fetchInstitution(instId);
@@ -2335,6 +2346,7 @@ export const actions = {
     state.session.identity = result.user.role;
     state.session.loggedIn = true;
     state.ui.loginMenuOpen = false;
+    state.ui.devLoginOpen = false;
     state.ui.appInfoDialog = "";
     state.ui.appUpdate.open = false;
 

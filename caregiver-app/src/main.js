@@ -1574,6 +1574,19 @@ function handleClick(event) {
   if (action === "enter-director") return actions.enterDirector();
   if (action === "toggle-login-menu") return actions.toggleLoginMenu();
   if (action === "close-login-menu") return actions.closeLoginMenu();
+  if (action === "open-dev-login") return actions.openDevLogin();
+  if (action === "close-dev-login") return actions.closeDevLogin();
+  if (action === "dev-login-account") {
+    const username = trigger.dataset.username || "";
+    const password = trigger.dataset.password || "";
+    state.ui.loginError = "";
+    notify();
+    actions.login("demo-qinghe-care", username, password).catch((err) => {
+      state.ui.loginError = err.message || "开发者登录失败";
+      notify();
+    });
+    return;
+  }
   if (action === "open-app-info") return actions.openAppInfoDialog(value);
   if (action === "close-app-info") return actions.closeAppInfoDialog();
   if (action === "check-app-update") return actions.checkAppUpdate();

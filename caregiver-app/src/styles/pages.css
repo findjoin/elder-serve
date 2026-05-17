@@ -149,6 +149,45 @@
   grid-column: 1 / -1;
 }
 
+.dev-login-list {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+
+.dev-login-account {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #fffaf5;
+  padding: 12px 14px;
+  display: grid;
+  gap: 4px;
+  color: var(--text-main);
+  text-align: left;
+}
+
+.dev-login-account span {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dev-login-account strong {
+  font-size: 15px;
+}
+
+.dev-login-account em {
+  color: var(--text-sub);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.dev-login-account:active {
+  transform: scale(0.99);
+  background: rgba(242, 169, 104, 0.14);
+}
+
 .login-form {
   width: 100%;
   max-width: 320px;

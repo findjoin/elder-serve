@@ -28,6 +28,10 @@ function renderLoginMenu(state, runtimeInfo) {
 
   return `
     <div class="login-more-menu">
+      <button type="button" class="login-more-menu__item is-primary" data-action="open-dev-login">
+        <span>开发者入口</span>
+        <em>测试账号</em>
+      </button>
       <button type="button" class="login-more-menu__item" data-action="open-app-info" data-value="version">
         <span>当前版本</span>
         <em>${formatVersion(runtimeInfo)}</em>
@@ -36,6 +40,48 @@ function renderLoginMenu(state, runtimeInfo) {
       <button type="button" class="login-more-menu__item" data-action="open-app-info" data-value="contact">联系开发者</button>
       <button type="button" class="login-more-menu__item is-primary" data-action="check-app-update">检查更新</button>
     </div>
+  `;
+}
+
+const DEV_LOGIN_ACCOUNTS = [
+  { label: "院长端", title: "赵院长 / 测试院长", username: "testdirector", password: "test123456" },
+  { label: "护工端", title: "张护工 / 1F", username: "cg01", password: "test123456" },
+  { label: "护工端", title: "李护工 / 2F", username: "cg02", password: "test123456" },
+  { label: "家属端", title: "王大爷家属", username: "family01", password: "test123456" },
+];
+
+function renderDevLoginDialog(state) {
+  if (!state?.ui?.devLoginOpen) return "";
+
+  return `
+    <section class="login-modal">
+      <button class="login-modal__backdrop" data-action="close-dev-login" aria-label="关闭开发者入口"></button>
+      <div class="login-modal__dialog">
+        <h2>开发者入口</h2>
+        <div class="login-modal__content">
+          <span>当前测试养老院：青禾镇颐养护理院</span>
+          <span>选择账号后将通过真实云端登录接口进入对应端。</span>
+        </div>
+        <div class="dev-login-list">
+          ${DEV_LOGIN_ACCOUNTS.map(
+            (account) => `
+              <button
+                type="button"
+                class="dev-login-account"
+                data-action="dev-login-account"
+                data-username="${account.username}"
+                data-password="${account.password}"
+              >
+                <span>${account.label}</span>
+                <strong>${account.title}</strong>
+                <em>${account.username}</em>
+              </button>
+            `,
+          ).join("")}
+        </div>
+        <button type="button" class="button button--secondary button--block" data-action="close-dev-login">关闭</button>
+      </div>
+    </section>
   `;
 }
 
@@ -162,6 +208,7 @@ export function renderLoginPage({ state } = {}) {
         <p>Powered by Smart ElderCare System</p>
         <p>当前版本：${formatVersion(runtimeInfo)}</p>
       </div>
+      ${renderDevLoginDialog(state)}
       ${renderInfoDialog(state, runtimeInfo)}
       ${renderUpdateDialog(state)}
     </section>
