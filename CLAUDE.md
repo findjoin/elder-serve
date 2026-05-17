@@ -418,3 +418,12 @@ notify() → renderApp() → app.innerHTML = 新HTML → 全量DOM重建
 3. **`generate_tasks_for_date`** (任务生成) — 按 `planItemId` upsert，不可删已有任务
 
 **核心原则**：APP 发到 `/api/tasks` 的是**部分更新**，不是全量替换。任何用 Pydantic model 全量字段覆盖 DB 列的代码都会导致数据丢失。修改后用 curl 验证：创建→标记异常→查询→确认结构字段完整。
+## Frontend Release Rule
+
+After any frontend change under `caregiver-app/`, build, publish, and install the latest Android APK with:
+
+```powershell
+.\scripts\release_frontend_apk.ps1 -BaseUrl "http://49.235.183.62" -ApiKey "elder_safe_token_2026" -ReleaseNotes "frontend update"
+```
+
+This script increments `caregiver-android/gradle.properties`, runs `caregiver-android\gradlew.bat clean assembleDebug`, uploads the APK to the cloud release API, uninstalls the old emulator app, installs the new APK, and starts `com.elderserve.caregiver/.MainActivity`.
