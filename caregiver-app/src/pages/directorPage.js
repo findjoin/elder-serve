@@ -413,6 +413,8 @@ function renderDirectorInboxCalendar(state, selectors) {
   const monthReceivedCount = new Set(monthReports.map((item) => `${getCareRecordDate(item)}:${item.elderId || item.id}`)).size;
   const previousMonth = shiftCalendarMonth(state.ui.directorAuditDate, state.director.date, -1);
   const nextMonth = shiftCalendarMonth(state.ui.directorAuditDate, state.director.date, 1);
+  const fetchedAt = selectors.cloudStatus?.fetchedAt || "";
+  const fetchedAtLabel = fetchedAt ? `上次刷新 ${fetchedAt.slice(11, 16)}` : "尚未刷新";
   const calendarCells = [
     ...Array.from({ length: leadingBlankCount }, (_, index) => `<span class="director-inbox-day director-inbox-day--blank" aria-hidden="true" data-blank="${index}"></span>`),
     ...Array.from({ length: daysInMonth }, (_, index) => {
@@ -428,8 +430,9 @@ function renderDirectorInboxCalendar(state, selectors) {
           <strong>日报收件日历</strong>
         </div>
         <div class="director-inline-actions">
+          <span class="director-inbox-refresh-time">${fetchedAtLabel}</span>
           <button class="director-inline-link" data-action="refresh-cloud-care-records">
-            ${selectors.cloudStatus.loading ? "刷新中" : "刷新"}
+            ${selectors.cloudStatus.loading ? "刷新中" : "手动刷新"}
           </button>
           ${renderStatusPill(`本月已收 ${monthReceivedCount}`, "success")}
         </div>

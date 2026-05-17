@@ -6824,6 +6824,12 @@
   gap: 14px;
 }
 
+.director-inbox-refresh-time {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .director-inbox-calendar__toolbar {
   display: grid;
   grid-template-columns: 44px 1fr 44px;
@@ -8787,4 +8793,3 @@
 .director-timeline__dot--muted {
   background: #94a3b8;
 }
-
