@@ -2321,14 +2321,21 @@ export const actions = {
 
       if (state.cloud.institutionStateFetchedAt) {
         state._holdNotify = false;
-        state.ui.syncPhase = "正在同步护理任务...";
+        state.ui.syncPhase = "正在后台同步护理任务...";
         notify();
-        await actions.refreshDirectorCloudTasks({ silent: true });
+        actions.refreshDirectorCloudTasks({ silent: true }).finally(() => {
+          if (state.ui.syncPhase === "正在后台同步护理任务...") {
+            state.ui.syncPhase = "";
+            notify();
+          }
+        });
       }
     } finally {
       state._holdNotify = false;
       state._loadingDirectorData = false;
-      state.ui.syncPhase = "";
+      if (state.ui.syncPhase !== "正在后台同步护理任务...") {
+        state.ui.syncPhase = "";
+      }
       notify();
     }
   },
@@ -4300,6 +4307,7 @@ export const actions = {
         caregiverId: state.caregiver.id,
         recordDate: options.recordDate || state.director.date,
         limit: options.limit || 100,
+        light: true,
       });
       const nextItems = Array.isArray(response?.items)
         ? response.items
@@ -4359,8 +4367,9 @@ export const actions = {
     try {
       const response = await fetchPublishedTasks({
         institutionId: state.institution.id,
-        recordDate: options.recordDate || "",
+        recordDate: options.recordDate || state.director.date || formatNowDate(),
         limit: options.limit || 200,
+        light: true,
       });
       const nextItems = Array.isArray(response?.items)
         ? response.items
