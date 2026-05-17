@@ -544,8 +544,7 @@ function renderDirectorInboxExportDialog(state, selectors) {
   if (!exportDate) return "";
 
   const records = getInboxDayReports(exportDate, selectors.directorCloudReports || []);
-  const isLoading = selectors.cloudStatus.loading;
-  const canExport = records.length > 0 && !isLoading;
+  const canExport = records.length > 0;
 
   return `
     <section class="director-inbox-export-modal">
@@ -555,7 +554,7 @@ function renderDirectorInboxExportDialog(state, selectors) {
           <div>
             <strong>导出${formatCalendarDateLabel(exportDate)}日报</strong>
           </div>
-          ${renderStatusPill(isLoading ? "下载中" : `云端 ${records.length} 份`, records.length ? "success" : "warning")}
+          ${renderStatusPill(`缓存 ${records.length} 份`, records.length ? "success" : "warning")}
         </div>
         <div class="director-inbox-export-modal__body">
           <span>使用当前已刷新到本机的日报数据。</span>
