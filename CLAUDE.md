@@ -36,6 +36,7 @@ Android App (WebView 壳)
 | `caregiver-app/src/data/mockData.js` | 本地初始数据 + `buildTasksFromConfiguration` |
 | `remote-main.py` | 后端 FastAPI 服务 |
 | `PROJECT_MAP.md` | 项目地图（路由、API、业务流程速查） |
+| `DATA_ARCHITECTURE.md` | 云端数据库架构（14 表、关系链、API 概览） |
 | `CLAUDE.md` | 本文件（开发习惯 + 操作手册） |
 
 ## 强制工作流（每次代码改动必须执行）
@@ -113,14 +114,14 @@ Android App (WebView 壳)
 
 ## 必须了解的软件逻辑
 
-### 日报模板 → 日常任务 生成流程
+### 日报模板 → 日常任务 生成流程（服务端负责）
 
 1. 院长进入 `director-care-records` → 编辑日报模板
 2. 模板有 4 个 section（生活照料、饮食照料、护理协助、健康监测），每节有若干 items
-3. `applyDailyReportTemplate()` 保存模板 → `rebuildTasks()` 生成本地任务
-4. `publishReportTemplateGeneratedTasks()` 上传到 `/api/tasks`
-5. 任务按**楼层**分配给护工（`getCaregiverForFloor()`）
-6. 护工端轮询 `/api/tasks?caregiverId=...` 获取任务
+3. 院长保存模板 → `POST /api/daily-report-template` → 服务端自动 `regenerate_tasks_for_elders`
+4. 护工端/院长端轮询 `GET /api/tasks` → 服务端检查当天任务数=0 时自动 `generate_tasks_for_date`
+5. 任务按**楼层**分配给护工（服务端 `_resolve_caregiver_for_elder`：assignedCaregiverId 优先 → 同楼层轮转）
+6. **前端不再生成本地任务** — `buildTasksFromConfiguration` 已废弃，`rebuildTasks` 已删除
 
 ### 护工日报提交流程
 
@@ -130,9 +131,9 @@ Android App (WebView 壳)
 
 ### 人员管理 → 云端同步
 
-1. 院长修改人员 → `rebuildTasks()` → 任务重分配
-2. `persistInstitutionSharedState()` → `POST /api/institution-state`
-3. `publishReportTemplateGeneratedTasks()` → `POST /api/tasks`（每个任务一条）
+1. 院长修改人员（add/update/delete elder/caregiver）→ 调用 `POST /api/elders` 或 `/api/caregivers`
+2. **服务端自动 regenerate 受影响老人的任务** — 护工分配、任务时间、老人名等即时更新
+3. `persistInstitutionSharedState()` 仍同步 `POST /api/institution-state`（兼容旧轮询）
 4. 护工端通过 `refreshInstitutionSharedState()` 拉取新人员信息
 
 ### 临时任务
@@ -147,6 +148,14 @@ Android App (WebView 壳)
 - 前端 `downloadDirectorCareReports` 已加 `institutionId`
 - 后端 `list_care_records` 已加 `institutionId` 过滤
 - `/api/elders` 已通过 `_get_elder_or_404()` 实现隔离
+
+### 登录与账号系统
+
+- 登录接口 `POST /api/auth/login` 支持可选 `institutionId`（为空时跨机构搜索用户名）
+- `_loadCloudPersonnel()` 将云端 auth users 与本地 caregivers 按 `roleEntityId` 匹配合并，设置 `cloudUserId`/`username`/`cloudUserStatus`
+- 本地 mockData 的 caregiver/elder 默认无 `cloudUserId`/`familyUserId`，首次云端同步后填充
+- 人员管理页显示账号状态标签：`账号正常`(active)、`账号已禁用`(disabled)、`账号未同步`(无 cloudUserId)
+- 新增护工/老人时，`saveDirectorPersonnelDraft` 自动调用 `createAuthUser` 创建云端账号
 
 ## 操作手册
 
@@ -173,6 +182,57 @@ SSH:   ubuntu@49.235.183.62 (凭据见 .claude/server-credentials.md)
 ```
 
 模拟器信息：Pixel 6 / Android 14 (API 34) / x86_64 / 2GB RAM
+
+### CDP 远程控制 WebView（自动登录/操作）
+
+模拟器中的 WebView 支持 Chrome DevTools Protocol 远程调试，可用于自动填写表单、点击按钮、检测页面状态。
+
+**WebView DevTools socket 命名规则**：`webview_devtools_remote_{PID}`（PID 是 WebView 进程 ID，每次启动变化，必须动态发现）。
+
+#### 步骤 1：发现 socket 并转发
+
+```powershell
+# 查找 WebView DevTools socket（关键：动态 PID）
+adb shell "cat /proc/net/unix | grep devtools"
+
+# 输出示例：00000000: 00000002 00000000 ... @webview_devtools_remote_12345
+# 记下 PID（如 12345），然后转发
+adb forward tcp:9222 localabstract:webview_devtools_remote_12345
+```
+
+#### 步骤 2：用 CDP 脚本操作
+
+```powershell
+# 检测当前页面
+python scripts/cdp_raw.py page
+
+# 登录（默认用户名/密码，可指定）
+python scripts/cdp_raw.py login testdirector test123456
+
+# 登录指定账号
+python scripts/cdp_raw.py login director01 test123456
+
+# 执行任意 JS
+python scripts/cdp_raw.py eval "document.title"
+
+# 点击元素
+python scripts/cdp_raw.py click ".login-form__submit"
+
+# 填写输入框
+python scripts/cdp_raw.py type "input[name='username']" myuser
+```
+
+`cdp_raw.py` 是纯标准库 WebSocket 客户端（无需额外依赖），通过 `Runtime.evaluate` 在 WebView 中执行 JS。`_discover_target()` 自动通过 `http://localhost:9222/json` 发现页面 target，无需硬编码 PID。
+
+#### 登录流程原理
+
+```
+cdp_raw.py login <username> <password>
+  → Runtime.evaluate: el.value=<username> on input[name='username']
+  → Runtime.evaluate: el.value=<password> on input[name='password']
+  → Runtime.evaluate: el.click() on .login-form__submit
+  → sleep 3s → cdp_detect_page() 验证登录后的页面路由
+```
 
 ### 构建和安装 APK
 
@@ -209,8 +269,8 @@ curl -s -H "x-api-key: elder_safe_token_2026" \
 编辑 `caregiver-android/gradle.properties`，递增 `appVersionCode` 和 `appVersionName`：
 
 ```
-appVersionCode=29
-appVersionName=2.9
+appVersionCode=40
+appVersionName=4.0
 ```
 
 然后构建：
@@ -295,13 +355,20 @@ python scripts/seed_demo_institution.py
 
 ## 当前云端人员状态
 
-| 楼层 | 护工 | 老人 |
-|------|------|------|
-| 1F | 123 (caregiver-1777611839190) | 王大爷、李奶奶、张爷爷 |
-| 2F | 张建国、陈秀英 | 陈奶奶、赵大爷、胡奶奶 |
-| 3F | 周桂芬 | 孙奶奶、刘大爷 |
-| 4F | 赵志强 | 何爷爷、黄奶奶 |
-| 5F | 刘彩云 | 周爷爷、冯奶奶 |
+### 机构：demo-qinghe-care (v4.0, versionCode=40)
+
+| 楼层 | 护工 | 老人 | 护工登录账号 |
+|------|------|------|-------------|
+| 1F | 张建国 | 王大爷、李奶奶、张爷爷 | cg01 / test123456 |
+| 2F | 李美兰 | 陈奶奶、赵大爷、胡奶奶 | cg02 / test123456 |
+| 3F | 陈秀英 | 孙奶奶、刘大爷 | cg03 / test123456 |
+| 4F | — | 何爷爷、黄奶奶 | — |
+| 5F | 周桂芬 | 周爷爷、冯奶奶 | — |
+
+- 院长账号：`testdirector` / `test123456`（云端 active）
+- 旧账号（director01, caregiver01, zhangsan, Qq, wangxiaoming 等）已 disabled
+- 周桂芬（caregiver-demo-04）暂无云端账号
+- 所有老人暂无家属账号（familyUserId 为空）
 
 ## 已知问题 & 已修复
 
@@ -314,6 +381,11 @@ python scripts/seed_demo_institution.py
 7. ~~院长端页面每 10-12 秒跳动~~ → `applyInstitutionStateSnapshot` 所有字段加 JSON 对比，`refreshDirectorCloudTasks` 加签名对比，`refreshDirectorCloudReports` 不再 clear 改用合并。根因：两个端点返回日报数量不同（care-records 42 条 vs institution-state dailyReports 51 条），clear+refill 导致数组在两种状态间切换，每次触发 `notify()` → `app.innerHTML` 全量 DOM 重建。
 8. ~~院长异常页缺少护工文字说明~~ → 两个根因：(a) `pages.css` 中 `.director-copy` 被 `display: none !important` 全局隐藏，异常卡片用了这个 class 渲染 note；(b) `buildTasksFromConfiguration` 重建任务时不保留 `exceptionNote`/`exceptionType`/`exceptionEvidence`/`exceptionReportedAt` 字段，`rebuildTasks()` 触发后立即丢失异常数据，需等下次云端轮询才能恢复。
 9. ~~`settings.json` JSON 解析失败~~ → `C:\*` 中的 `\*` 是非法 JSON 转义序列，改成 `C:\\*`。
+10. ~~院长总览页显示 0 位老人 / 人员页显示 0 护工 0 老人~~ → `buildDirectorOverview` 和 `renderDirectorPeoplePage` 加了 `familyUserId`/`cloudUserId` 过滤条件，但本地 mockData 中无人有云端账号，全部被过滤。修复：移除过滤，账号状态标签已足够指示云端同步状态。
+11. ~~`upsert_published_task` 整体替换 raw_payload 导致结构字段丢失~~ → 护工标记异常后 `existing.raw_payload = payload` 把 schedule/title/elderName 等全清空。修复：合并非空值 `existing_raw = dict(existing.raw_payload or {}); for k,v in payload.items(): if v: existing_raw[k]=v`。
+12. ~~`upsert_published_task` 显式列被空值覆盖~~ → Pydantic model_dump 对未传字段填充默认空字符串，`existing.schedule = normalize_text(request.schedule)` 把已有 schedule 覆盖成空。修复：所有显式列加 `if normalize_text(request.xxx):` 守卫。
+13. ~~`task_to_dict` status 覆盖顺序错误~~ → `payload.update({"status": row.status})` 在 raw_payload 之后执行，raw_payload.status="risk" 被 row.status="pending" 覆盖。修复：先显式列，后 raw_payload 覆盖（非空值过滤）。
+14. ~~异常页显示 6-7 条而非 2 条~~ → `buildDirectorExceptionReports` 遍历所有 `state.anomalies`，即使无匹配的 cloud risk task。修复：`if (!matchedTask) return;` 跳过孤立异常。
 
 ## 院长端轮询与渲染机制
 
@@ -336,3 +408,13 @@ notify() → renderApp() → app.innerHTML = 新HTML → 全量DOM重建
 ### 实时时钟
 
 时钟 (`data-live-clock`) 通过 `liveClockTimer` 每秒直接更新 DOM 节点 `textContent`，不经过 `notify()`/`renderApp()`，不影响页面其他部分。
+
+## 服务端关键模式 — 修改前必须读
+
+修改 `remote-main.py` 中的以下 3 个函数时，必须先读 `PROJECT_MAP.md` 第 11 节：
+
+1. **`upsert_published_task`** (POST /api/tasks) — raw_payload **只能合并不能替换**，所有显式列**非空才覆盖**
+2. **`task_to_dict`** (DB 行 → JSON) — **先显式列 → 后 raw_payload 覆盖**，raw_payload 空值过滤
+3. **`generate_tasks_for_date`** (任务生成) — 按 `planItemId` upsert，不可删已有任务
+
+**核心原则**：APP 发到 `/api/tasks` 的是**部分更新**，不是全量替换。任何用 Pydantic model 全量字段覆盖 DB 列的代码都会导致数据丢失。修改后用 curl 验证：创建→标记异常→查询→确认结构字段完整。

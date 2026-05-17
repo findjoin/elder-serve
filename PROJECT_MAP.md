@@ -16,6 +16,9 @@
 | [8](#8-ui-导航网络) | 完整导航图 + 28 路由索引 | UI 页面跳转关系 |
 | [9](#9-构建命令) | 构建 / 安装 / 启动命令 | 操作参考 |
 | [10](#10-未来规划) | 登录系统 / 机构管理 / 待规划功能 | 了解后续方向，避免重复设计 |
+| [11](#11-回归防护清单) | 3 个关键模式 + 5 条修改检查清单 | 防止再次改坏系统 |
+| [12](#12-功能-代码-云端对照) | APP 主要功能 → 前端代码 → 云端接口 → 后端实现 | 端到端定位业务闭环 |
+| [13](#13-后端架构评估与优化清单) | 后端结构、性能/安全风险、可优化方向 | 改后端前评估影响 |
 
 ---
 
@@ -30,9 +33,9 @@ APP 由 5 个核心模块构成，每个功能都是挂在这 5 个模块上的�
        │
     pages/*.js ──── 页面渲染函数（纯 HTML 生成，只读 state）
        │
-    cloudApi.js ─── HTTP 客户端（10 个接口函数）
+    cloudApi.js ─── HTTP 客户端（14 个接口函数，含用户管理）
        │
-    mockData.js ─── 任务生成引擎（模板 → 日常任务）
+    mockData.js ─── 本地初始数据 + 辅助函数（任务生成已迁移到 remote-main.py 服务端）
 ```
 
 **核心循环**：`用户操作 → action 修改 state → notify() → renderApp() → app.innerHTML = 新 HTML`
@@ -45,7 +48,8 @@ state
 ├── elders[]             ← 老人信息（楼层、房间、护理方案绑定）
 ├── caregivers[]         ← 护工信息（楼层、班次、考勤）
 ├── careRecords[]        ← 护工日报记录
-├── dailyReportTemplate  ← 当前启用的日报模板
+├── dailyReportTemplates ← 命名模板 map（key=template.id），支持多模板并存
+├── dailyReportTemplate   ← 计算属性，返回第一个命名模板
 ├── inventory[]          ← 库存/物资
 ├── institution          ← 养老院基础信息
 ├── ui                   ← 弹窗、草稿、筛选、选中项（不持久化）
@@ -98,19 +102,15 @@ document.addEventListener("change", handleChange)  ← select/checkbox
 
 合并策略：**Cloud-Last-Write-Wins**（`{...local, ...cloud}`）
 
-### 1.5 任务引擎（mockData.js + state.js）
+### 1.5 任务引擎（remote-main.py 服务端）
 
 ```
-buildTasksFromConfiguration()
-├── 遍历 elderCarePlans → 按护理方案生成 care plan 任务
-├── 遍历 dailyReportTemplate → 按日报模板生成 report template 任务
-├── 主匹配：planItemId（精确匹配旧任务状态）
-└── 备匹配：elderId|title|schedule（模板变更后兜底匹配）
-
-rebuildTasks()
-├── 保留所有临时任务（isTemporaryTask）
-├── 调用 buildTasksFromConfiguration 重建日常任务
-└── 触发 refreshDirectorOverview + ensureCurrentSelections
+generate_tasks_for_date(institution_id, record_date, db)
+├── Phase 1: 遍历 elderCarePlans → 按护理方案生成 care plan 任务
+├── Phase 2: 遍历 elders → 每人按 elder.reportTemplateId 查找 dailyReportTemplates → 生成 report template 任务
+├── 匹配策略：planItemId 精确匹配（upsert 保留旧状态）
+├── 护工分配：_resolve_caregiver_for_elder() — assignedCaregiverId 优先 → 同楼层轮转
+└── 触发点：GET /api/tasks（当天无任务时自动生成）、POST /api/institution-state、POST /api/daily-report-template
 
 任务状态：pending → completed / risk / refused
 ```
@@ -151,22 +151,17 @@ rebuildTasks()
   │              (state.js:1098)
   │
   ├─ 数据变更触发点（任一触发都可能导致百分比跳动）：
-  │   ├─ rebuildTasks() (state.js:1435) — 重建日常任务
-  │   │   └─ 被 applyInstitutionStateSnapshot (state.js:668) 调用
-  │   │       条件：caregivers/elders/institution/template/carePlans 任一 JSON 变更
+  │   ├─ 服务端 generate_tasks_for_date() — 任务由服务端统一生成（GET /api/tasks 自动触发）
   │   ├─ refreshDirectorCloudTasks (main.js:2102, 10s轮询)
   │   │   └─ mergeCloudTask (state.js:573) — Cloud-Last-Write-Wins
   │   │   └─ buildTaskSignature 对比后才 notify (state.js:3902)
   │   ├─ refreshDirectorCloudReports (main.js:2101, 10s轮询) — 合并 careReports
   │   ├─ refreshInstitutionSharedState (main.js:2169, 12s轮询) — 人员/模板快照
-  │   │   └─ applyInstitutionStateSnapshot → 5 字段 JSON 对比 → rebuildTasks
+  │   │   └─ applyInstitutionStateSnapshot → 5 字段 JSON 对比（不再触发任务生成，由服务端负责）
   │   └─ tickClock() (state.js:1883) — 每分钟触发 notify()
   │
   └─ 已知不稳定点：
-      ├─ buildTasksFromConfiguration (mockData.js:926) 排序用 elderId tiebreak
-      │   vs sortTasksBySchedule (state.js:1098) 排序用 id tiebreak → 不一致
       ├─ applyInstitutionStateSnapshot 中 roomsByFloor 内数组未排序 → JSON 对比假阳性
-      └─ previousByFallback Map "last wins" 在输入顺序变化时非确定性
 ```
 
 ### 2.2 院长异常页面
@@ -209,10 +204,9 @@ rebuildTasks()
 │   │   → 拖拽设置每个 item 的 timeWindow → setDailyReportTemplateItemTime (state.js:3021)
 │   ├── 人员分配：人员编辑弹窗中 <select reportTemplateId> (directorPage.js:3476)
 │   │   → addElder (state.js:2727) / updateElder (state.js:2782) 保存到老人对象
-│   ├── applyDailyReportTemplate → rebuildTasks → buildTasksFromConfiguration
-│   │   → 遍历每个老人，检查 elder.reportTemplateId === 模板.id
-│   │   → 按模板 section×item 生成任务，每条带 timeWindow 作为执行时间区间
-│   └── publishReportTemplateGeneratedTasks → 每条任务 POST /api/tasks
+│   ├── applyDailyReportTemplate → saveDailyReportTemplateDraft → POST /api/daily-report-template
+│   │   → 服务端保存模板后自动 regenerate 受影响老人的任务
+│   └── 任务上传由服务端自动完成，不再需要前端 publish
 ├── 日报填写（护工）：
 │   ├── buildCaregiverDailyReportDraft → 根据模板生成草稿
 │   ├── 填写 → saveCaregiverDailyReport → upsertDailyReport
@@ -224,15 +218,22 @@ rebuildTasks()
 └── 导入：openDailyReportTemplateImport → fetchDailyReportTemplates → 选择模板
 ```
 
-### 2.5 人员管理
+### 2.5 人员管理 + 云端账号体系
 
 ```
-挂载点：state.caregivers + state.elders
-├── 操作：add/update/remove → rebuildTasks（任务重分配）→ syncInstitutionSharedState → publishReportTemplateGeneratedTasks
-├── 渲染：renderDirectorPeoplePage + renderPersonnelDraftDialog
+挂载点：state.caregivers + state.elders + UserTable（云端 users 表）
+├── 操作：add/update/remove → POST /api/elders（或 caregivers）→ 服务端自动 regenerate 任务 → 前端拉取最新任务
+├── 护工新增 → 自动创建云端账号（createAuthUser / POST /api/auth/users）
+│   ├── caregiver.username / caregiver.cloudUserId / caregiver.cloudUserStatus 三字段关联
+│   └── role_entity_id 桥接 caregiver.id ↔ UserTable.id
+├── 护工删除 → 自动禁用云端账号（disableAuthUser / PUT /api/auth/users/{id}/disable）
+├── 渲染：renderDirectorPeoplePage + renderPersonnelDraftDialog（含 username/password 字段）
+│   └── 账号状态指示：绿色"账号正常" / 橙色"账号未同步" / 红色"账号已禁用"
 └── 同步：buildInstitutionStateSnapshot → POST /api/institution-state
          其他端轮询 → applyInstitutionStateSnapshot → 7 字段逐一 JSON 对比
 ```
+
+**后台层级视图**：`static/admin.html` 新增"层级视图"tab，按机构 → 院长/护工/家属树状展示用户状态。
 
 ### 2.6 其余功能（快速定位）
 
@@ -270,13 +271,11 @@ rebuildTasks()
 
 ```
 检查顺序（按概率从高到低）：
-  ① rebuildTasks 是否被意外触发？
+  ① applyInstitutionStateSnapshot 是否假阳性触发？
      → 看控制台 [INST-CHANGE] / [STRUCTURE-CHANGED] / [REBUILD-TASKS] 日志
      → applyInstitutionStateSnapshot (state.js:668) 5 字段 JSON 对比是否假阳性
      → roomsByFloor 内数组未排序、Map 遍历顺序不稳定都可能触发
   ② 排序不一致导致百分比漂移？
-     → buildTasksFromConfiguration (mockData.js:926) sort 用 elderId tiebreak
-     → sortTasksBySchedule (state.js:1098) sort 用 id tiebreak
      → 不同排序下 countExpectedDueTasks 的 handledCount 可能差 1
   ③ 云端轮询是否反复覆盖本地？
      → 看控制台 [CLOUD-TASKS] 日志
@@ -286,8 +285,7 @@ rebuildTasks()
      → countExpectedDueTasks (state.js:1116): max(scheduledDue, handledCount)
      → percentNumber (state.js:1129): 分子/分母，total=0 返回 0
   ⑤ 数据来源是否正确？
-     → 本地：查 mockData.js buildTasksFromConfiguration
-     → 云端：curl GET /api/tasks?institutionId=demo-qinghe-care
+     → 本地：查 cloud：服务端 generate_tasks_for_date 是唯一数据源
 ```
 
 ### 3.2a "预期进度不随时间增长"
@@ -338,11 +336,10 @@ rebuildTasks()
   ① 护工端是否成功上传？
      → 检查 syncCaregiverTaskToCloud 返回值 + state.cloud.tasksError
   ② 院长端轮询是否拉取到？
-     → shouldAcceptCloudTask 是否拒绝了该任务？
+     → GET /api/tasks?caregiverId=xxx 返回的任务是否匹配？（服务端过滤）
   ③ 合并逻辑是否正确？
      → mergeCloudTask 是否覆盖了本地修改？
-  ④ rebuildTasks 是否在院长端删除了云端数据？
-     → 人员/模板变更后 rebuildTasks 会重建所有任务
+  ④ 服务端 generate_tasks_for_date 是否正确赋值 caregiverId？
 ```
 
 ### 3.6 "CSS 样式不生效"
@@ -371,8 +368,7 @@ rebuildTasks()
 
 | 函数 | 位置 | 作用 |
 |------|------|------|
-| `buildTasksFromConfiguration` | mockData.js:926 | 模板→任务生成（按 planItemId 匹配旧状态） |
-| `rebuildTasks` | state.js:1435 | 重建日常任务（保留临时），触发 overview 更新 |
+| `generate_tasks_for_date` | remote-main.py | 服务端任务生成（两阶段：方案+模板），GET /api/tasks 自动触发 |
 | `isTemporaryTask` | state.js:1121 | 判断是否临时任务（id 以 temp-task- 开头） |
 | `sortTasksBySchedule` | state.js:1098 | 按 schedule→id 排序（id tiebreak 保证确定性） |
 | `completeTask` | state.js:2460 | 打卡完成/取消 |
@@ -387,14 +383,23 @@ rebuildTasks()
 | `serializeCloudTask` | state.js:512 | 本地→云端格式（每次生成新 updatedAt） |
 | `normalizeCloudTask` | state.js:536 | 云端→本地格式 |
 | `mergeCloudTask` | state.js:573 | Cloud-Last-Write-Wins 合并（云端覆盖本地同名字段） |
-| `shouldAcceptCloudTask` | state.js:~1466 | 判断是否接受云端任务 |
 | `buildTaskSignature` | state.js:3902 (director) / 3968 (caregiver) | 任务集合签名 = JSON([id,status,exception...]) |
-| `applyInstitutionStateSnapshot` | state.js:668 | 5 字段 JSON 对比 → structureChanged → rebuildTasks |
+| `applyInstitutionStateSnapshot` | state.js:668 | 5 字段 JSON 对比（不再调 rebuildTasks）|
 | `syncDirectorCloudPolling` | main.js:2079 | 院长端 10s 轮询（tasks + care-records） |
 | `syncCaregiverTaskPolling` | main.js:2107 | 护工端 10s 轮询（自己的 tasks） |
 | `syncInstitutionSharedStatePolling` | main.js:2169 | 12s 全局轮询（人员/机构快照） |
 
-### 4.4 院长选择器 & 渲染链
+### 4.4 服务端核心函数（remote-main.py）
+
+| 函数 | 作用 | 关键细节 |
+|------|------|---------|
+| `generate_tasks_for_date` | 两阶段任务生成（方案+模板） | 按 planItemId upsert，保留已有状态 |
+| `task_to_dict(row)` | DB 行 → API JSON | **先显式列，后 raw_payload 覆盖**（非空值才覆盖） |
+| `upsert_published_task` | POST /api/tasks 处理 | **合并 raw_payload**（不替换），显式列非空才写 |
+| `list_published_tasks` | GET /api/tasks 查询 | 当天任务数=0 时自动触发生成 |
+| `_resolve_caregiver_for_elder` | 护工分配 | assignedCaregiverId 优先 → 同楼层过滤 → 轮转 |
+
+### 4.5 院长选择器 & 渲染链
 
 | 函数 | 位置 | 输出 |
 |------|------|------|
@@ -421,11 +426,12 @@ rebuildTasks()
 3. **Cloud-Last-Write-Wins** — 云端数据直接覆盖本地同名字段，无冲突解决
 4. **planItemId 匹配** — 任务身份标识，跨 rebuild 保持任务状态
 5. **fallback 匹配** — `elderId|title|schedule` 兜底，模板变更后仍能保留状态
-6. **临时任务隔离** — `temp-task-` 前缀 ID，rebuildTasks 时保留，不受模板影响
+6. **临时任务隔离** — `temp-task-` 前缀 ID，服务端任务生成时保留，不受模板影响
 7. **轮询仅变更通知** — 签名对比/JSON 对比，数据未变不触发 DOM 重建
 8. **实时时钟绕过渲染** — 每秒直接操作 DOM textContent，分钟变更才触发 notify 更新进度
 9. **sortTasksBySchedule id tiebreak** — schedule 相同时按 id 排序，保证任务列表确定性
 10. **进度百分比 = max(时间到期, 已处理)** — expectedDue 取 scheduledDue 和 handledCount 的较大值，确保已处理的不会因时间未到而"缩水"
+11. **命名模板架构** — 院长可从基础模板导入 → 编辑 → 命名保存为命名模板（`dailyReportTemplates` map）。每位老人只需选择所用命名模板（`elder.reportTemplateId`），任务按老人各自模板生成。模板编辑器中新建模板时弹出命名对话框，编辑已有模板则直接保存。
 
 ---
 
@@ -778,6 +784,13 @@ cd caregiver-android
 - admin/superadmin 视为 director 同权：可访问院长工作台、底部导航、轮询、自动登录恢复
 - 超管通过 `/api/admin/*` 端点跨机构管理
 
+**已完成（v3.6）：**
+- 护工云端账号体系打通：院长新增护工自动创建云端账号，删除护工自动禁用云端账号
+- 后台层级视图：`static/admin.html` 新增"层级视图"tab，按机构 → 院长/护工/家属树状展示
+- `caregiver` 记录新增 `username`/`cloudUserId`/`cloudUserStatus` 三字段
+- `role_entity_id` 桥接 `caregiver.id` ↔ `UserTable.id`
+- CDP 脚本修复：`cdp_raw.py` 无 Origin header 绕过 WebView 安全策略
+
 **待完成：**
 - Phase 3：院长端用户管理 UI（`directorPage.js` 添加"账号管理"tab）
 - Phase 4：开发者后台独立 Web 页面
@@ -811,3 +824,537 @@ cd caregiver-android
 | 离线模式 | 低 | 无网络时缓存操作，联网后批量同步（当前完全依赖在线） |
 | 操作日志/审计 | 低 | 记录谁在什么时候做了什么操作（`ai_analysis_logs` 表可复用） |
 | 多语言支持 | 低 | 当前文案均为硬编码中文 |
+
+---
+
+## 11. 回归防护清单
+
+> **任务生成已从 APP 端迁移到服务端。服务端的正确性是整个系统的根基。以下 3 个模式绝对不可改坏。**
+
+### 模式 1：raw_payload 只能合并，不能替换
+
+**位置**：`upsert_published_task` (remote-main.py)，POST /api/tasks 处理函数
+
+**为什么危险**：APP 发的是**部分更新**（只含变化的字段）。护工标记异常时 request 只有 `status/exceptionNote/exceptionType`，没有 `schedule/title/elderName` 等结构字段。如果用 `existing.raw_payload = payload` 整体替换，结构字段就永久丢失了。
+
+**正确做法**：
+```python
+# 合并：只覆盖非空值，保留未传的结构字段
+existing_raw = dict(existing.raw_payload or {})
+for k, v in payload.items():
+    if v is not None and v != "" and v != [] and v != {}:
+        existing_raw[k] = v
+existing.raw_payload = existing_raw
+```
+
+**连带伤害**：raw_payload 被清空后，`task_to_dict` 返回的结构字段也丢失 → 护工时间轴任务无标题、无时间、无老人名 → 时间轴完全不可用。
+
+### 模式 2：显式列非空才覆盖
+
+**位置**：`upsert_published_task` (remote-main.py)，显式列赋值块
+
+**为什么危险**：Pydantic model 对未传字段会自动填默认值（空字符串）。`existing.schedule = normalize_text(request.schedule)` 在 request 没传 schedule 时会把已有值覆盖成空字符串。原因：Pydantic `model_dump()` 生成**所有字段**的键值对，不区分"没传"和"传了空"。
+
+**正确做法**：
+```python
+if normalize_text(request.schedule):
+    existing.schedule = normalize_text(request.schedule)
+# 同理：title、elderName、caregiverName、source、sourceApp 等所有结构字段
+```
+
+**涉及字段**：schedule、title、elder_name、caregiver_name、elder_room、elder_bed、elder_floor、institution_name、record_date、plan_item_id、template_id、category、note、source、source_app 等 — 全部需要非空守卫。
+
+### 模式 3：task_to_dict 先显式列，后 raw_payload 覆盖
+
+**位置**：`task_to_dict` (remote-main.py)，DB 行 → API JSON
+
+**为什么危险**：raw_payload 存的是 APP 最后一次 POST 的完整结构数据。显式列（如 `row.status`）是数据库权威值。但如果显式列在 raw_payload 之后覆盖，raw_payload 中的 `"status": "risk"` 会被 `row.status`（可能是 `"pending"`）覆盖。
+
+**正确做法**：
+```python
+# 1. 先从显式列构建
+payload = {"id": row.id, "status": row.status, ...}
+# 2. 再用 raw_payload 的非空值覆盖（raw_payload 有更丰富的结构信息）
+rp = dict(row.raw_payload or {})
+for k, v in rp.items():
+    if v is not None and v != "" and v != [] and v != {}:
+        payload[k] = v
+```
+
+**注意**：raw_payload 可能包含空字符串的 `id`、`taskId` 等字段，空值过滤 (`v != ""`) 是关键。
+
+### 修改服务端前必须回答的 5 个问题
+
+修改 `remote-main.py` 的 `upsert_published_task`、`task_to_dict`、`generate_tasks_for_date` 之前：
+
+1. **结构字段会不会丢？** — request 是部分更新还是全量？Pydantic model 的默认值会不会覆盖 DB？
+2. **raw_payload 是合并还是替换？** — 用 `=` 赋值还是用 dict merge + non-empty guard？
+3. **task_to_dict 返回的数据完整吗？** — 优先级顺序对吗？空值过滤有效吗？
+4. **用 curl 验证过了吗？** — 至少覆盖：创建任务 → 护工标记异常 → 再次查询 → 任务标题/时间/老人名是否还在？
+5. **改了 generate_tasks_for_date 后 regenerate 测试了吗？** — `POST /api/tasks` 触发 regen → 检查返回的任务数量和字段完整性
+
+---
+
+## 12. 功能-代码-云端对照
+
+> 这一节用于把“APP 里看到的功能”直接串到前端代码、云端接口和后端实现。查业务问题时先按功能找闭环，再回到前面章节看细节。
+
+### 12.1 前端主干
+
+| 模块 | 位置 | 职责 |
+|------|------|------|
+| PWA 入口 | `caregiver-app/index.html:15` | 加载 4 个 CSS 和 `src/main.js` |
+| 路由表 | `caregiver-app/src/main.js:57` | `state.ui.route` → 页面渲染函数，28 条路由集中注册 |
+| 渲染入口 | `caregiver-app/src/main.js:1488` | `renderApp()` 全量重建页面、底部导航、弹窗、toast |
+| 点击分发 | `caregiver-app/src/main.js:1541` | 全局 `data-action` 事件代理，页面只声明动作 |
+| 轮询入口 | `caregiver-app/src/main.js:2268`、`2298`、`2360` | 院长任务/日报轮询、护工任务轮询、整院状态轮询 |
+| 自动登录 | `caregiver-app/src/main.js:2386` | token 恢复，调用 `/api/auth/me` 校验身份 |
+| 全局状态 | `caregiver-app/src/store/state.js:35` | `state` 数据中心，由 `createMockState()` 初始化 |
+| actions | `caregiver-app/src/store/state.js:1927` | 唯一业务状态修改入口 |
+| selectors | `caregiver-app/src/store/state.js:5011` | 页面派生数据入口，每次渲染实时计算 |
+| 云端客户端 | `caregiver-app/src/utils/cloudApi.js:45`、`94` | 读取 Android/本地配置，统一 `requestJson()` |
+| Android 桥 | `caregiver-android/app/src/main/java/com/elderserve/caregiver/MainActivity.java:219` | 注入 `AndroidBridge`，提供运行信息、定位、文件保存、打印、APK 更新 |
+| 后台管理页 | `static/admin.html:332` | 独立后台，不复用 APP store，直接调用 `/api/admin/*` |
+
+### 12.2 登录、身份和自动恢复
+
+```
+loginPage.js:126
+  → main.js:1578 login-submit
+  → state.js:2226 actions.login()
+  → cloudApi.requestJson("/api/auth/login")
+  → remote-main.py:2708 auth_login()
+  → users/sessions 表
+  → 按 role 跳转：caregiver=attendance, family=family-home, director/admin=director-home
+  → main.js:2386 自动登录时调用 /api/auth/me
+  → remote-main.py:2792 auth_me()
+```
+
+- 前端页面：`caregiver-app/src/pages/loginPage.js:126`
+- 前端状态：`state.session`、`state.ui.loginError`、`state.ui.loginMenuOpen`
+- 后端认证：`get_current_user()` 在 `remote-main.py:550`，`hash_password()`/`verify_password()` 在 `remote-main.py:805`
+- 云端表：`users` (`remote-main.py:345`)、`sessions` (`remote-main.py:360`)、`admins` (`remote-main.py:388`)
+- 注意：`cloudApi.js:74` 默认带 `x-api-key`，登录后再叠加 Bearer token。
+
+### 12.3 APP 更新
+
+```
+loginPage.js:26 更多菜单
+  → main.js:1571 check-app-update
+  → state.js:1955 checkAppUpdate()
+  → cloudApi.js:225 fetchLatestAppRelease()
+  → GET /api/app-releases/latest
+  → remote-main.py:2677 get_latest_app_release()
+  → state.js:2009 downloadAppUpdate()
+  → AndroidBridge.downloadAndInstallUpdate()
+  → main.js:2244 window.__onElderServeUpdate 回写状态
+```
+
+- 发布接口：`POST /api/app-releases` 在 `remote-main.py:2596`
+- 发布脚本：`scripts/publish_apk.ps1`
+- 发布记录表：`app_releases` 在 `remote-main.py:326`
+- Android 版本来源：`caregiver-android/gradle.properties`
+
+### 12.4 护工打卡与工作台入口
+
+```
+attendancePage.js:12
+  → main.js:1597 clock-in / enter-workbench
+  → attendanceBridge.js:163 requestAttendanceVerification()
+  → state.js:2285 actions.clockIn()
+  → state.js:4869 actions.enterWorkbench()
+  → route=home
+```
+
+- 页面：`caregiver-app/src/pages/attendancePage.js:12`
+- 原生桥：`caregiver-app/src/utils/attendanceBridge.js:163`
+- 状态：`state.session.clockInAt`、`clockInLocation`、`clockInStatus`
+- 云端：当前打卡主要是本地会话状态，未独立落云端考勤表；院长端考勤展示来自本地/共享状态派生。
+
+### 12.5 护工任务中心、执行和异常
+
+```
+homePage.js:11 楼层/任务概览
+  → roomSelectPage.js:9 房间列表
+  → elderDetailPage.js:25 老人详情
+  → taskDetailPage.js:188 任务详情
+  → main.js:1601-1664 choose/select/complete/record/exception
+  → state.js:2659 completeTask()
+  → state.js:2567 saveTaskRecordDialog()
+  → state.js:1552 syncCaregiverTaskToCloud()
+  → cloudApi.js:187 uploadPublishedTask()
+  → POST /api/tasks
+  → remote-main.py:2150 upsert_published_task()
+```
+
+- 时间线渲染：`renderCaregiverTaskTimeline()` 在 `taskDetailPage.js:115`
+- 任务云端拉取：`state.js:4195 refreshCaregiverCloudTasks()` → `cloudApi.js:194 fetchPublishedTasks()` → `remote-main.py:2229 list_published_tasks()`
+- 完成记录：`state.js:2687 createTaskCompletion()` → `cloudApi.js:274` → `remote-main.py:2294 create_task_completion()`
+- 异常记录：`state.js:1595 addAnomaly()`、`1617 addQuickAnomaly()` → `cloudApi.js:302 createAnomaly()` → `remote-main.py:2394 create_anomaly()`
+- 云端表：`published_tasks` (`remote-main.py:271`)、`task_completions` (`remote-main.py:169`)、`anomalies` (`remote-main.py:203`)
+- 关键字段：`status=pending/completed/risk/refused`，异常文本在 `exceptionNote/exceptionType/exceptionEvidence`。
+
+### 12.6 护工交班日报与院长收件箱
+
+```
+caregiverDailyReportPage.js:66
+  → main.js:2021 save-daily-report / submit-daily-report
+  → state.js:4042 saveCaregiverDailyReport()
+  → state.js:4051 submitCaregiverDailyReport()
+  → cloudApi.js:137 uploadCareRecord()
+  → POST /api/care-records
+  → remote-main.py:2030 upsert_care_record()
+  → 院长 state.js:4090 refreshDirectorCloudReports()
+  → cloudApi.js:144 fetchCareRecords()
+  → remote-main.py:2104 list_care_records()
+  → directorPage.js:405/466/539/631 日历、单日详情、导出、归档预览
+```
+
+- 护工日报页面：`caregiver-app/src/pages/caregiverDailyReportPage.js:66`
+- 模板字段渲染：`renderReportTemplateFields()` 在 `caregiverDailyReportPage.js:51`
+- 院长日报页：`renderDirectorCareRecordsPage()` 在 `directorPage.js:3018`
+- 日历：`renderDirectorInboxCalendar()` 在 `directorPage.js:405`
+- 单日详情：`renderDirectorInboxDayDialog()` 在 `directorPage.js:466`
+- 归档预览：`renderDirectorCareRecordPreview()` 在 `directorPage.js:631`
+- 后端摘要：`create_summary()` 在 `remote-main.py:56`
+- 云端表：`care_records` 在 `remote-main.py:220`
+
+### 12.7 院长首页、总览、楼层和统计
+
+```
+directorPage.js:3388 renderDirectorHomePage()
+  → state.js:5011 selectors()
+  → state.js:1761 buildDirectorTaskOverview()
+  → state.js:1788 buildDirectorCaregiverStatistics()
+  → state.js:1823 buildDirectorFloorCaregiverProgress()
+  → state.js:1855 buildDirectorExceptionReports()
+  → state.js:4266 refreshDirectorCloudTasks()
+  → GET /api/tasks
+  → remote-main.py:2229 list_published_tasks()
+```
+
+- 院长首页：`renderDirectorHomePage()` 在 `directorPage.js:3388`
+- 楼层详情：`renderDirectorFloorDetailPage()` 在 `directorPage.js:3715`
+- 护工统计：`renderDirectorStatisticsPage()` 在 `directorPage.js:4395`
+- 实时时钟：`main.js:2330 updateLiveClockNodes()`，分钟变化时触发 `actions.tickClock()`
+- 渲染风险：`renderApp()` 使用 `innerHTML` 全量重建，不必要 `notify()` 会导致页面跳动。
+
+### 12.8 院长人员管理与云端账号
+
+```
+directorPage.js:4161 renderDirectorPeoplePage()
+  → directorPage.js:3776 renderPersonnelDraftDialog()
+  → main.js:1675-1768 personnel actions
+  → state.js:2828 saveDirectorPersonnelDraft()
+  → state.js:2892 addCaregiver() / 2919 updateCaregiver() / 2945 removeCaregiver()
+  → state.js:2969 addElder() / 3025 updateElder() / 3083 removeElder()
+  → cloudApi.js:237 createAuthUser()
+  → POST /api/auth/users
+  → remote-main.py:2832 auth_create_user()
+  → state.js:2057 persistInstitutionSharedState()
+  → POST /api/institution-state
+  → remote-main.py:2466 upsert_institution_state()
+```
+
+- 人员页面：`renderDirectorPeoplePage()` 在 `directorPage.js:4161`
+- 护工行：`renderCaregiverPersonnelRow()` 在 `directorPage.js:4014`
+- 老人行：`renderElderPersonnelRow()` 在 `directorPage.js:4039`
+- 账号禁用：`disableAuthUser()` 在 `cloudApi.js:248`，后端 `auth_disable_user()` 在 `remote-main.py:2859`
+- 云端人员表：`elders` (`remote-main.py:114`)、`caregivers` (`remote-main.py:154`)、`users` (`remote-main.py:345`)
+- 共享快照：`institution_states` (`remote-main.py:312`) 存 `personnelInfo`，其他端通过 `state.js:2077 refreshInstitutionSharedState()` 拉取。
+
+### 12.9 日报模板、排程和自动任务生成
+
+```
+directorPage.js:3018 renderDirectorCareRecordsPage()
+  → directorPage.js:2590 renderReportTemplateEditor()
+  → directorPage.js:2216 renderReportTemplateSchedulePage()
+  → main.js:1795-1948 收集模板/排程/导入/预览动作
+  → state.js:3606 saveDailyReportTemplateDraft()
+  → cloudApi.js:156 uploadDailyReportTemplate()
+  → POST /api/daily-report-template
+  → remote-main.py:1924 upsert_daily_report_template()
+  → remote-main.py:1581 regenerate_tasks_for_elders()
+  → remote-main.py:1262 generate_tasks_for_date()
+```
+
+- 模板导入：`renderReportTemplateImportDialog()` 在 `directorPage.js:2512`，`state.js:3415 openDailyReportTemplateImport()`
+- 模板目录：`state.js:3669 refreshDailyReportTemplates()` → `cloudApi.js:175 fetchDailyReportTemplates()` → `remote-main.py:1977 list_daily_report_templates()`
+- 任务生成分两段：护理方案任务在 `remote-main.py:1355`，日报模板任务在 `remote-main.py:1435`
+- 护工分配：`_resolve_caregiver_for_elder()` 在 `remote-main.py:1243`，优先老人绑定护工，再按楼层轮转。
+
+### 12.10 护理方案、临时任务和派单
+
+```
+directorPage.js:3559 renderDirectorCarePlansPage()
+  → directorPage.js:1541 renderSelectedPlan()
+  → directorPage.js:713 renderDirectorDispatchDraftDialog()
+  → directorPage.js:3678 renderDirectorDispatchPage()
+  → main.js:1966-2078 plan/dispatch actions
+  → state.js:3791 saveDirectorDispatchDraft()
+  → state.js:4512 assignTask()
+  → cloudApi.js:187 uploadPublishedTask()
+  → remote-main.py:2150 upsert_published_task()
+```
+
+- 方案草稿：`state.ui.directorPlanDraft`、`state.ui.directorPlanItemDraft`
+- 临时任务：`source="temporary"`，不受日报模板重生成影响
+- 任务分配：`assignmentMode/assignmentStatus/caregiverId/caregiverName`
+- 回归重点：`POST /api/tasks` 是部分更新，后端 `raw_payload` 只能合并非空值。
+
+### 12.11 院长异常、已读箱和任务详情
+
+```
+taskDetailPage.js:188 护工提交异常
+  → state.js:2567 saveTaskRecordDialog()
+  → state.js:1595 addAnomaly()
+  → POST /api/anomalies
+  → remote-main.py:2394 create_anomaly()
+  → POST /api/tasks 更新 risk
+  → directorPage.js:4344 renderDirectorAnomalyPage()
+  → state.js:1855 buildDirectorExceptionReports()
+  → directorPage.js:4367 renderDirectorReadInboxPage()
+```
+
+- 院长异常卡：`renderDirectorExceptionReportCard()` 在 `directorPage.js:1112`
+- 已读箱卡：`renderReadExceptionCard()` 在 `directorPage.js:1146`
+- 院长任务详情：`renderDirectorTaskDetailDialog()` 在 `directorPage.js:1168`
+- 已读/还原/删除 actions：`state.js:3137`、`3145`、`3150`、`3178`
+- 后端异常更新：`update_anomaly()` 在 `remote-main.py:2442`
+
+### 12.12 家属端
+
+```
+main.js:68-71 family routes
+  → familyPage.js:108 renderFamilyHomePage()
+  → familyPage.js:210 renderFamilyHealthPage()
+  → familyPage.js:251 renderFamilyMessagesPage()
+  → familyPage.js:282 renderFamilyProfilePage()
+  → state.js:2742 toggleFamilyMessage()
+```
+
+- 当前家属端主要读本地/共享状态，云端账号已支持 `role=family`。
+- 家属账号创建入口在院长人员管理：`saveDirectorPersonnelDraft()` 中调用 `createAuthUser()`。
+- 后续真正消息系统需要新增后端消息表和 `/api/messages`。
+
+### 12.13 后台管理
+
+```
+static/admin.html:332 api()
+  → static/admin.html:371 doLogin()
+  → POST /api/admin/login
+  → remote-main.py:2891 admin_login()
+  → static/admin.html:611-681 各 tab 拉取数据
+  → /api/admin/institutions / users / elders / report-templates / care-records / published-tasks / sessions / app-releases
+  → remote-main.py:2941-3181
+```
+
+- 独立页面：`static/admin.html`
+- 后端入口：`require_admin()` 在 `remote-main.py:2886`
+- 支持范围：机构、用户、老人、日报模板、护理记录、任务、会话、APK 发布记录
+- 已修复：后台任务列表不再访问不存在的 `t.exception_type` 字段，改从 `raw_payload.exceptionType` 读取。
+
+### 12.14 cloudApi.js 对照表
+
+| 前端函数 | 位置 | HTTP | 后端实现 | 主要调用方 |
+|----------|------|------|----------|------------|
+| `requestJson()` | `cloudApi.js:94` | 通用 | 所有 API | `login()`、`logout()`、`loadTaskEvidence()`、自动登录 |
+| `uploadCareRecord()` | `cloudApi.js:137` | `POST /api/care-records` | `remote-main.py:2030` | `submitCaregiverDailyReport()` |
+| `fetchCareRecords()` | `cloudApi.js:144` | `GET /api/care-records` | `remote-main.py:2104` | `downloadDirectorCareReports()`、`loadLatestDirectorCareRecord()` |
+| `uploadDailyReportTemplate()` | `cloudApi.js:156` | `POST /api/daily-report-template` | `remote-main.py:1924` | `saveDailyReportTemplateDraft()` |
+| `fetchDailyReportTemplate()` | `cloudApi.js:163` | `GET /api/daily-report-template` | `remote-main.py:2009` | 模板导入 fallback |
+| `fetchDailyReportTemplates()` | `cloudApi.js:175` | `GET /api/daily-report-templates` | `remote-main.py:1977` | 模板目录/导入 |
+| `uploadPublishedTask()` | `cloudApi.js:187` | `POST /api/tasks` | `remote-main.py:2150` | 完成/异常/临时任务/派单 |
+| `fetchPublishedTasks()` | `cloudApi.js:194` | `GET /api/tasks` | `remote-main.py:2229` | 院长/护工任务轮询 |
+| `uploadInstitutionState()` | `cloudApi.js:206` | `POST /api/institution-state` | `remote-main.py:2466` | 人员/机构/模板共享快照 |
+| `fetchInstitutionState()` | `cloudApi.js:213` | `GET /api/institution-state` | `remote-main.py:2545` | 全局共享状态轮询 |
+| `fetchLatestAppRelease()` | `cloudApi.js:225` | `GET /api/app-releases/latest` | `remote-main.py:2677` | APP 更新检查 |
+| `createAuthUser()` | `cloudApi.js:237` | `POST /api/auth/users` | `remote-main.py:2832` | 新增护工/家属账号 |
+| `fetchAuthUsers()` | `cloudApi.js:244` | `GET /api/auth/users` | `remote-main.py:2811` | `_loadCloudPersonnel()` |
+| `disableAuthUser()` | `cloudApi.js:248` | `PUT /api/auth/users/{id}/disable` | `remote-main.py:2859` | 删除护工/老人时禁用账号 |
+| `fetchCaregivers()` | `cloudApi.js:252` | `GET /api/caregivers` | `remote-main.py:1775` | `_loadCloudPersonnel()` |
+| `createTaskCompletion()` | `cloudApi.js:274` | `POST /api/task-completions` | `remote-main.py:2294` | `completeTask()` |
+| `fetchTaskCompletions()` | `cloudApi.js:278` | `GET /api/task-completions` | `remote-main.py:2322` | 当前少用/预留 |
+| `createVital()` | `cloudApi.js:288` | `POST /api/vitals` | `remote-main.py:2348` | 当前少用/预留 |
+| `fetchVitals()` | `cloudApi.js:292` | `GET /api/vitals` | `remote-main.py:2374` | 当前少用/预留 |
+| `createAnomaly()` | `cloudApi.js:302` | `POST /api/anomalies` | `remote-main.py:2394` | `addAnomaly()`、`addQuickAnomaly()` |
+| `fetchAnomalies()` | `cloudApi.js:306` | `GET /api/anomalies` | `remote-main.py:2419` | 当前少用/预留 |
+| `updateAnomaly()` | `cloudApi.js:316` | `POST /api/anomalies/{id}/update` | `remote-main.py:2442` | 异常已读/处理 |
+| `updateInstitution()` | `cloudApi.js:320` | `POST /api/institution/update` | `remote-main.py:2561` | 当前少用/预留 |
+| `fetchInstitution()` | `cloudApi.js:324` | `GET /api/institution` | `remote-main.py:2583` | 登录后加载机构信息 |
+
+---
+
+## 13. 后端架构评估与优化清单
+
+### 13.1 后端结构总览
+
+`remote-main.py` 是单文件 FastAPI 后端，采用“配置 → ORM 表定义 → Pydantic 请求模型 → 序列化函数 → 业务函数 → API 路由”的集中式结构。
+
+| 区域 | 位置 | 说明 |
+|------|------|------|
+| 环境配置 | `remote-main.py:26` | `ELDER_API_KEY`、`ELDER_PUBLIC_BASE_URL`、`ELDER_DATABASE_URL`、OpenClaw 配置 |
+| DB 初始化 | `remote-main.py:41` | SQLAlchemy engine/session，SQLite `check_same_thread=False` |
+| ORM 表 | `remote-main.py:114` | 老人、护工、任务、日报、机构、用户、管理员、版本等 |
+| 手写迁移 | `remote-main.py:403`、`423`、`449`、`512` | SQLite `ALTER TABLE` 补列 |
+| FastAPI app | `remote-main.py:481` | CORS、`/static`、`/admin` |
+| 认证 | `remote-main.py:550` | Bearer session 或 `x-api-key` 双通道 |
+| 请求模型 | `remote-main.py:583` | Pydantic request models |
+| 序列化 | `remote-main.py:845` | `*_to_dict()` 系列 |
+| 任务生成 | `remote-main.py:1262` | `generate_tasks_for_date()` 核心任务引擎 |
+| 路由 | `remote-main.py:1651` 起 | 所有 `/api/*` 端点集中定义 |
+
+### 13.2 表结构与职责
+
+| 表 | 位置 | 职责 |
+|----|------|------|
+| `elders` | `remote-main.py:114` | 老人档案、楼层房床、护理等级、日报模板、责任护工、家属信息 |
+| `caregivers` | `remote-main.py:154` | 护工档案、楼层、班次、状态、电话 |
+| `task_completions` | `remote-main.py:169` | 任务完成记录 |
+| `vitals` | `remote-main.py:187` | 体征记录 |
+| `anomalies` | `remote-main.py:203` | 异常记录 |
+| `care_records` | `remote-main.py:220` | 护工日报/交班日报，包含模板快照和各类护理项 JSON |
+| `daily_report_templates` | `remote-main.py:257` | 日报模板 JSON |
+| `published_tasks` | `remote-main.py:271` | 日常任务、临时任务、异常任务状态和分配信息 |
+| `institution_states` | `remote-main.py:312` | 整院共享快照，兼容 APP 端状态同步 |
+| `app_releases` | `remote-main.py:326` | APK 发布记录 |
+| `users` | `remote-main.py:345` | 机构内院长/护工/家属账号 |
+| `sessions` | `remote-main.py:360` | 登录 token 会话 |
+| `institutions` | `remote-main.py:375` | 机构记录、容量配额 |
+| `admins` | `remote-main.py:388` | 平台管理员 |
+
+### 13.3 后端 API 分组
+
+| 分组 | 端点 | 实现位置 |
+|------|------|----------|
+| 健康/静态 | `GET /`、`GET /healthz`、`GET /admin` | `remote-main.py:507`、`1651` |
+| 老人 | `GET/POST /api/elders`、`GET/POST/DELETE /api/elders/{id}`、头像上传 | `remote-main.py:1664` |
+| 护工 | `GET/POST /api/caregivers`、`POST/DELETE /api/caregivers/{id}` | `remote-main.py:1775` |
+| AI | `/api/task-to-openclaw`、`/api/ai/analyze-daily-tasks`、`/api/ai/analyses` | `remote-main.py:1847` |
+| 日报模板 | `POST /api/daily-report-template`、`GET /api/daily-report-template(s)` | `remote-main.py:1924` |
+| 日报 | `POST/GET /api/care-records`、`GET /api/care-records/{id}` | `remote-main.py:2030` |
+| 任务 | `POST/GET /api/tasks`、`GET /api/tasks/{id}` | `remote-main.py:2150` |
+| 执行/体征/异常 | `/api/task-completions`、`/api/vitals`、`/api/anomalies` | `remote-main.py:2294` |
+| 共享状态 | `POST/GET /api/institution-state` | `remote-main.py:2466` |
+| 机构 | `POST /api/institution/update`、`GET /api/institution` | `remote-main.py:2561` |
+| APK | `POST /api/app-releases`、`GET /api/app-releases/latest` | `remote-main.py:2596` |
+| 登录/账号 | `/api/auth/*` | `remote-main.py:2708` |
+| 平台后台 | `/api/admin/*` | `remote-main.py:2886` |
+
+### 13.4 云端任务生成机制
+
+```
+generate_tasks_for_date(institution_id, record_date, db) remote-main.py:1262
+  → 读取 elders/caregivers/templates/institution_state
+  → 如果独立表为空，从 institution_state.personnel_info 补齐老人/护工
+  → Phase 1: elderCarePlans 生成护理方案任务 remote-main.py:1355
+  → Phase 2: dailyReportTemplates 生成日报模板任务 remote-main.py:1435
+  → _resolve_caregiver_for_elder() 分配护工 remote-main.py:1243
+  → 按 planItemId/fallback key upsert 到 published_tasks
+```
+
+触发点：
+
+- `GET /api/tasks` 当 `autoGenerate=true` 且当天任务为空时触发，见 `remote-main.py:2241`
+- 保存日报模板后触发受影响老人任务重生成，见 `remote-main.py:1960`
+- 更新护工楼层后触发当天任务重生成，见 `remote-main.py:1826`
+- 上传 `institution-state` 后同步人员并触发当天任务重生成，见 `remote-main.py:2495`
+
+回归原则：
+
+- `upsert_published_task()` (`remote-main.py:2150`) 处理 APP 部分更新，不是全量替换。
+- `task_to_dict()` (`remote-main.py:1065`) 要保留 raw payload 中的结构字段。
+- `generate_tasks_for_date()` (`remote-main.py:1262`) 不能删除已有状态，必须 upsert 保留已完成/异常。
+
+### 13.5 架构合理性判断
+
+当前架构适合演示、小规模单机构和快速迭代：前端、Android WebView、FastAPI、SQLite 的闭环完整；`published_tasks`、`care_records`、`institution_states` 足以支撑院长端和护工端同步；`cloudApi.js` 也把云端调用统一收口。
+
+它不适合直接作为高并发生产架构：后端单文件超过 3000 行，认证、业务、迁移、AI、文件、后台管理都耦合在 `remote-main.py`；SQLite 写锁与多端 10 秒级轮询叠加后容易出现锁竞争；`GET /api/tasks` 带写入副作用，会让只读轮询承担任务生成职责。
+
+### 13.6 必须谨慎改的风险点
+
+1. **多租户隔离**：大量接口依赖客户端传入 `institutionId` 过滤，例如老人/护工/日报/任务在 `remote-main.py:1664`、`1775`、`2104`、`2229`；只有部分详情接口做了 session 机构校验。生产化前应统一 `resolve_institution_id(current_user, requested_id)`。
+2. **API Key 权限过宽**：`get_current_user()` 中 `x-api-key` 直接返回 `role=system`，见 `remote-main.py:571`；前端默认每次请求都带 `x-api-key`，见 `cloudApi.js:74`。后续应区分设备同步 key、机构 key、平台管理 key。
+3. **GET 请求有写副作用**：`list_published_tasks()` 会在查询时调用 `generate_tasks_for_date()` 并提交事务，见 `remote-main.py:2241`。并发轮询下要防重复生成和状态覆盖。
+4. ~~**任务字段合并**~~：`upsert_published_task()` 已改为 `exclude_unset` + 仅请求实际携带且非空的显式列才覆盖 + `raw_payload` 非空合并；新任务缺少 `institutionId/recordDate/title` 时返回 404，避免部分更新 miss 后创建壳任务。
+5. **SQLite 写锁**：轮询、日报、任务、版本发布共用一个 SQLite DB。迁移 PostgreSQL/MySQL 前必须补唯一约束、索引、迁移脚本和事务边界。
+6. ~~**后台任务列表字段错误**~~：已改为从 `raw_payload.exceptionType` / `exception_type` 读取，不再访问不存在的 `t.exception_type`。
+7. ~~**会话吊销接口不匹配**~~：`admin_revoke_session()` 已兼容后台 UI 传入的 `token[:16] + "..."` 截断前缀，并在前缀不唯一时返回 409。
+8. **文件上传限制不足**：头像上传 `remote-main.py:1740` 缺少大小/MIME 限制；APK 上传 `remote-main.py:2596` 有扩展名和 SHA256，但也应纳入配额和审计。
+9. **业务日期时区**：后端 `now_iso()` 使用 UTC，自动任务重生成用 `datetime.now(timezone.utc).date()`，见 `remote-main.py:1828`、`1961`、`2497`；中国机构凌晨可能跨日错位。
+
+### 13.7 可优化方向
+
+| 优化项 | 建议 |
+|--------|------|
+| 模块拆分 | 拆为 `models.py`、`schemas.py`、`auth.py`、`routes/*`、`services/task_generation.py`、`services/institution_sync.py` |
+| DB 迁移 | 用 Alembic 替代 `Base.metadata.create_all()` + 手写 `ALTER TABLE` |
+| 索引 | 已通过 `ensure_performance_indexes()` 增加 `care_records(institution_id, record_date, updated_at)`、`published_tasks(institution_id, record_date, caregiver_id, status)`、`sessions(token, revoked, expires_at)` |
+| 轮询负载 | 增加 `updatedAfter`、ETag、游标分页，或改 WebSocket/SSE 推送 |
+| JSON 大字段 | 证据文件、照片、日报详情拆表或对象存储，列表接口只返回摘要 |
+| 登录安全 | `auth_login()`、`admin_login()` 增加失败限速、账号锁定、审计日志 |
+| API 响应 | 统一 `{status, item/items, fetchedAt}` envelope，减少前端兼容分支 |
+| 部分任务重生成 | `regenerate_tasks_for_elders()` 当前仍调用完整生成后过滤，见 `remote-main.py:1581`；可真正按 elder ids 查询和 upsert |
+| 主键 | `add_elder()` 使用 4 位随机数，见 `remote-main.py:1673`；建议改 UUID 或机构内序列号 |
+
+### 13.8 2026-05-14 老人分配后护工任务中心刷新修复
+
+问题链路：
+
+```
+director-care-plans 页面拖拽/点击分配老人
+  -> main.js:2039 reassign-elder-caregiver
+  -> main.js:2228 drop handler
+  -> state.js:4492 reassignElderCaregiver()
+  -> state.js:4526 reassignElderToCaregiver()
+```
+
+修复点：
+
+- `state.js:654 syncPendingElderTasksToCaregiver()`：老人改分配后，立即把当天、非临时、`pending` 的本地任务 `caregiverId/defaultCaregiverId` 改为目标护工，已完成/异常/不配合任务保留原护工归属，避免覆盖执行记录。
+- `state.js:691 uploadSyncedElderTasks()`：将上述受影响任务逐条 `uploadPublishedTask()` 到云端 `POST /api/tasks`，直接更新 `published_tasks`，不再只依赖 `POST /api/institution-state` 后端重生成。
+- `state.js:4492 reassignElderCaregiver()` / `state.js:4526 reassignElderToCaregiver()`：分配动作现在顺序执行“本地任务归属更新 -> 上传整院共享状态 -> 上传受影响任务 -> 院长端按当前日期刷新云端任务”。
+- `state.js:4337 refreshDirectorCloudTasks()`：支持传入 `recordDate`，分配完成后按 `state.director.date` 拉取云端任务，确保院长页面和护工任务中心使用同一日期的云端任务表。
+
+云端对应：
+
+- 老人手动绑定仍写入 `institution_states.personnelInfo.elders[].assignedCaregiverId`，后端 `remote-main.py:2466 upsert_institution_state()` 会同步到 `elders.assigned_caregiver_id` 并触发当天任务重生成；快照里的 `taskInfo.recordDate` 也会触发该业务日期的任务重生成，避免 APP 日期和服务器 UTC 日期不一致。
+- 前端新增的直接任务同步写入 `published_tasks`，后端入口是 `remote-main.py:2150 upsert_published_task()`；护工任务中心通过 `GET /api/tasks?caregiverId=...&recordDate=...` 拉取时会立即看到新归属任务。
+### 13.9 2026-05-14 院长护理方案时间轴重复日报任务修复
+
+现象：
+- 李美兰员工端完成 `房间整理` 后，院长端 `老人护理方案 -> 日报任务时间轴` 同一老人出现两条 `房间整理`：一条超时、一条已完成；其他日报任务也成对出现。
+
+源码定位：
+- `caregiver-app/src/pages/directorPage.js:3560` `renderDirectorCarePlansPage()` 渲染院长端老人护理方案页面。
+- `caregiver-app/src/pages/directorPage.js:3640` 调用 `renderPlanTimelineSidebar(selectedPlan, selectedResident, isTimelineOpen, state.tasks, state)`。
+- `caregiver-app/src/pages/directorPage.js:1747` `renderPlanTimelineSidebar()` 生成右侧日报任务时间轴。
+- `caregiver-app/src/pages/directorPage.js:1727` `getVisibleReportTimelineTasks()` 负责按老人、日期和展示 key 过滤日报任务。
+- `caregiver-app/src/pages/directorPage.js:1666` `renderDirectorTimelineTaskEntry()` 渲染单条时间轴任务卡片。
+
+根因：
+- 原 `renderPlanTimelineSidebar()` 只按 `source === "report-template"` 和 `elderId === resident.id` 过滤，未按 `recordDate/state.director.date` 过滤。
+- 院长端云端任务刷新会把多日期任务合并到 `state.tasks`，导致旧日期的超时任务和当前日期的已完成任务同时出现在同一个老人时间轴里。
+
+修复：
+- `getVisibleReportTimelineTasks()` 只展示当前院长业务日期的日报任务；没有 `recordDate` 的历史兼容任务仍保留。
+- `getTimelineTaskDisplayKey()` / `preferTimelineTask()` 对同一老人、同一模板、同一标题、同一时间的日报任务做展示去重；优先当前日期，其次较新的 `updatedAt/completedAt/publishedAt`，再优先已处理状态。
+- 本修复只影响院长端护理方案时间轴展示，不修改员工端打卡逻辑，也不改云端 `published_tasks` 数据结构。
+
+### 13.10 2026-05-14 APK v4.24 发布记录
+
+发布目的：
+- 将 `13.9` 的院长端日报任务时间轴重复展示修复发布到 Android APK。
+- 由于云端已有 `versionCode=63 / versionName=4.23`，本次递增到 `versionCode=64 / versionName=4.24`，确保手机端检查更新能识别为新版本。
+
+源码定位：
+- 版本号来源：`caregiver-android/gradle.properties`，字段 `appVersionCode=64`、`appVersionName=4.24`。
+- 构建入口：`caregiver-android/gradlew.bat clean assembleDebug`。
+- APK 产物：`caregiver-android/app/build/outputs/apk/debug/app-debug.apk`。
+- 发布脚本：`scripts/publish_apk.ps1`，读取 `gradle.properties` 版本号并调用 `POST /api/app-releases`。
+- 云端发布接口：`remote-main.py:2596` `create_app_release()`。
+- APP 检查更新链路：`main.js:1575` `check-app-update` → `state.js:1955` `checkAppUpdate()` → `cloudApi.js:225` `fetchLatestAppRelease()` → `remote-main.py:2677` `get_latest_app_release()`。
+
+本版本包含：
+- `caregiver-app/src/pages/directorPage.js:1727` 当前业务日期过滤和展示去重，修复同一老人同一日报任务显示旧日期超时 + 当前日期已完成两条的问题。

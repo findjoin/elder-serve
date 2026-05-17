@@ -5,7 +5,7 @@ function getElderLabel(state, elderId) {
 
 function getPriorityTone(item) {
   if (item.status.includes("待")) return "pending";
-  return item.level === "high" ? "risk" : "completed";
+  return "risk";
 }
 
 function getTypeHint(type) {
@@ -124,7 +124,7 @@ export function renderAnomalyPage({ state }) {
                     <div class="status-pill status-pill--${getPriorityTone(item)}">${item.status}</div>
                   </div>
                   <p>${item.note}</p>
-                  <small>${item.time} · ${item.elderId ? getElderLabel(state, item.elderId) : "未绑定老人"} · ${item.level === "high" ? "高优先级" : "普通优先级"}</small>
+                  <small>${item.time} · ${item.elderId ? getElderLabel(state, item.elderId) : "未绑定老人"}</small>
                 </div>
               `,
             )

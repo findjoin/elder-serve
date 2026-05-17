@@ -148,8 +148,21 @@ def cdp_get_identity(sock):
     })()
     """)
 
+def _discover_target():
+    import urllib.request
+    try:
+        resp = urllib.request.urlopen("http://localhost:9222/json", timeout=3)
+        pages = json.loads(resp.read().decode())
+        for p in pages:
+            if p.get("url", "").startswith("http"):
+                return p["id"]
+    except:
+        pass
+    return "44D51D05C9FCCBC6F8FEEA024B6DF98F"
+
 if __name__ == "__main__":
-    sock = ws_connect("localhost", 9222, "/devtools/page/FADAEF6E093199E7F089C3D9BFBBE45C")
+    target_id = _discover_target()
+    sock = ws_connect("localhost", 9222, f"/devtools/page/{target_id}")
     cdp_send(sock, "Runtime.enable")
     time.sleep(0.2)
 

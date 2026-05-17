@@ -1,8 +1,18 @@
 """Evaluate JS in Android WebView via CDP WebSocket."""
-import json, sys, time
+import json, sys, time, urllib.request
 from websocket import create_connection
 
-WS = "ws://localhost:9222/devtools/page/FADAEF6E093199E7F089C3D9BFBBE45C"
+def _discover_ws():
+    try:
+        resp = urllib.request.urlopen("http://localhost:9222/json", timeout=3)
+        pages = json.loads(resp.read().decode())
+        for p in pages:
+            if p.get("url", "").startswith("http"):
+                return p["webSocketDebuggerUrl"]
+    except: pass
+    return "ws://localhost:9222/devtools/page/44D51D05C9FCCBC6F8FEEA024B6DF98F"
+
+WS = _discover_ws()
 
 def send(ws, method, params=None):
     msg = {"id": int(time.time()*1000), "method": method}
@@ -20,7 +30,7 @@ def recv_until(ws, msg_id, timeout=5):
 
 def eval_js(ws, code):
     msg_id = int(time.time()*1000)
-    send(ws, "Runtime.evaluate", {"expression": code, "returnByValue": True, "awaitPromise": True})
+    send(ws, "Runtime.evaluate", {"expression": code, "returnByValue": True, "awaitPromise": True, "contextId": 1})
     r = recv_until(ws, msg_id)
     if r and "result" in r.get("result", {}):
         val = r["result"]["result"].get("value")
@@ -53,7 +63,7 @@ def wait_el(ws, selector, timeout=5):
     """)
 
 if __name__ == "__main__":
-    ws = create_connection(WS, header=["Origin: http://localhost:9222"])
+    ws = create_connection(WS, suppress_origin=True)
     send(ws, "Runtime.enable")
     send(ws, "Page.enable")
     time.sleep(0.2)

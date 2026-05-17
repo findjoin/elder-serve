@@ -2526,6 +2526,16 @@
   overflow-anchor: none;
 }
 
+.director-sync-banner {
+  text-align: center;
+  padding: 8px 12px;
+  margin: 0 8px 4px;
+  border-radius: 8px;
+  background: rgba(var(--app-primary-rgb, 74 144 226), 0.08);
+  color: var(--text-secondary, #666);
+  font-size: 0.82rem;
+}
+
 .director-page--care-plans {
   padding: 0;
   min-height: 100%;
@@ -4346,6 +4356,7 @@
 }
 
 .director-people-row {
+  position: relative;
   min-width: 0;
   padding: 12px;
   border-radius: 18px;
@@ -4467,7 +4478,7 @@
 
 .director-people-menu {
   position: absolute;
-  top: 48px;
+  top: 46px;
   right: 12px;
   z-index: 20;
   min-width: 98px;
@@ -4503,6 +4514,24 @@
 
 .director-people-menu button.is-danger {
   color: #e56b73;
+}
+
+.director-people-submenu {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 6px;
+  border-left: 2px solid var(--line);
+  margin-left: 6px;
+}
+
+.director-people-menu.is-template-open .director-people-submenu {
+  display: flex;
+}
+
+.director-people-submenu button {
+  font-weight: 700;
+  color: var(--text-muted);
 }
 
 .director-personnel-plan-list {
@@ -4735,6 +4764,20 @@
   font-size: 10px;
   font-style: normal;
   line-height: 1.2;
+}
+
+.director-floor-room-tag {
+  cursor: grab;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+.director-floor-room-tag:active {
+  cursor: grabbing;
+}
+
+.director-floor-staff-row.is-drag-over {
+  outline: 2px dashed var(--orange, #f97316);
+  outline-offset: -2px;
+  background: #fff8f0;
 }
 
 .director-stack--care-plans > .director-plan-summary--focus {
@@ -8197,6 +8240,61 @@
   font-weight: 700;
 }
 
+/* Monthly care record sheet */
+.care-record-sheet__monthly-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.care-record-sheet__monthly-table {
+  min-width: 600px;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.care-record-sheet__monthly-table th,
+.care-record-sheet__monthly-table td {
+  border: 1px solid #222222;
+  text-align: center;
+  vertical-align: middle;
+  padding: 4px 2px;
+  height: 24px;
+}
+
+.care-record-sheet__monthly-table thead th {
+  background: #f7f4ef;
+  font-weight: 700;
+}
+
+.care-record-sheet__monthly-table .monthly-group-col {
+  width: 50px;
+  font-weight: 900;
+  font-size: 10px;
+  background: #faf8f4;
+}
+
+.care-record-sheet__monthly-table .monthly-item-col {
+  width: 85px;
+  text-align: left;
+  padding: 4px 6px;
+  font-size: 9px;
+}
+
+.care-record-sheet__monthly-table .monthly-item-col small {
+  display: block;
+  color: #777777;
+  font-size: 7px;
+  margin-top: 1px;
+}
+
+.care-record-sheet__monthly-table .monthly-day-col {
+  width: 22px;
+  min-width: 22px;
+  font-size: 9px;
+}
+
 .care-record-sheet__check-cell {
   display: flex;
   align-items: center;
@@ -8344,6 +8442,20 @@
   .care-record-export-batch .care-record-sheet:last-child {
     break-after: auto;
     page-break-after: auto;
+  }
+
+  .care-record-sheet__monthly-scroll {
+    overflow-x: visible;
+  }
+
+  .care-record-sheet__monthly-table {
+    font-size: 8px;
+  }
+
+  .care-record-sheet__monthly-table th,
+  .care-record-sheet__monthly-table td {
+    height: 20px;
+    padding: 2px 1px;
   }
 
   .care-record-sheet__block {
@@ -8545,3 +8657,134 @@
     padding: 24px 18px;
   }
 }
+
+/* Import indicator */
+.director-report-template-import-info {
+  padding: 8px 16px;
+  font-size: 13px;
+  color: #4a6cf7;
+  background: #f0f3ff;
+  border-bottom: 1px solid #dce3ff;
+}
+
+/* Saved templates list */
+.director-report-template-saved-list {
+  padding: 12px 16px;
+  border-top: 1px solid #e5e7eb;
+  margin-top: 8px;
+}
+.director-report-template-saved-list__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #888;
+  margin-bottom: 6px;
+}
+.director-report-template-saved-item {
+  padding: 6px 8px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+  color: #333;
+}
+.director-report-template-saved-item:hover {
+  background: #f5f7fa;
+}
+.director-report-template-saved-item small {
+  color: #999;
+  margin-left: 6px;
+}
+
+/* Director task detail dialog */
+.director-task-detail {
+  max-width: 520px;
+}
+.director-task-detail__info {
+  margin-bottom: 12px;
+}
+.director-task-detail__info p {
+  margin: 4px 0;
+  font-size: 14px;
+}
+.director-task-detail__section {
+  margin-bottom: 14px;
+  padding: 12px;
+  background: #f5f7fa;
+  border-radius: 6px;
+}
+.director-task-detail__section > strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: #555;
+}
+.director-task-detail__section--alert {
+  background: #fff3f0;
+  border: 1px solid #fecaca;
+}
+.director-task-detail__note {
+  font-size: 14px;
+  color: #333;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.director-task-detail__photos {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+.director-task-detail__photos img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid #eee;
+}
+
+/* Timeline task badges */
+.timeline-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  margin-right: 4px;
+}
+.timeline-badge--alert {
+  background: #f43f5e;
+}
+.timeline-badge--info {
+  background: #3b82f6;
+}
+
+/* Clickable timeline task */
+.director-timeline__item--task.is-clickable {
+  cursor: pointer;
+}
+.director-timeline__item--task.is-clickable:hover .director-timeline__card--plan {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  transform: translateY(-1px);
+}
+.director-timeline__card-badges {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.director-timeline__dot--success {
+  background: #10b981;
+}
+.director-timeline__dot--error {
+  background: #f43f5e;
+}
+.director-timeline__dot--overdue {
+  background: #f59e0b;
+}
+.director-timeline__dot--muted {
+  background: #94a3b8;
+}
+

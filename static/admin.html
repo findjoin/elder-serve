@@ -159,6 +159,7 @@ td.actions{display:flex;gap:2px;flex-wrap:wrap}
     <ul class="sidebar-nav">
       <div class="nav-divider">系统管理</div>
       <li class="active" data-tab="institutions">&#127970; 机构管理</li>
+      <li data-tab="hierarchy">&#128202; 层级视图</li>
       <li data-tab="users">&#128101; 用户管理</li>
       <li data-tab="sessions">&#128172; 在线会话</li>
       <li data-tab="appReleases">&#128230; APP版本</li>
@@ -210,6 +211,12 @@ td.actions{display:flex;gap:2px;flex-wrap:wrap}
     <div id="tabCareRecords" class="card" style="display:none">
       <div class="tab-header" style="padding:16px 20px"><h2>护理记录</h2><select id="crInstitutionSelect"><option value="">-- 全部机构 --</option></select><input type="text" id="crElderSearch" placeholder="搜索老人姓名..." style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:14px;width:160px"/></div>
       <div class="table-wrap"><table id="careRecordsTable"><thead><tr><th>老人</th><th>房间</th><th>护工</th><th>日期</th><th>护理类型</th><th>状态</th><th>机构</th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <!-- Hierarchy Tab -->
+    <div id="tabHierarchy" class="card" style="display:none">
+      <div class="tab-header" style="padding:16px 20px"><h2>机构层级视图</h2><button class="btn btn-secondary btn-sm" id="btnRefreshHierarchy">刷新</button></div>
+      <div id="hierarchyTree" style="padding:16px"></div>
     </div>
 
     <!-- Tasks Tab -->
@@ -587,7 +594,8 @@ var tabConfig = {
   careRecords: { load: function(){ populateInstitutionSelect("crInstitutionSelect"); loadCareRecords(); } },
   tasks: { load: function(){ populateInstitutionSelect("taskInstitutionSelect"); loadTasks(); } },
   sessions: { load: loadSessions },
-  appReleases: { load: loadAppReleases }
+  appReleases: { load: loadAppReleases },
+  hierarchy: { load: loadHierarchy }
 };
 
 function switchTab(name) {
@@ -668,6 +676,44 @@ async function loadAppReleases() {
     var list = await api("GET", "/api/admin/app-releases");
     renderAppReleasesTable(list);
   } catch(e) { toast(e.message, "error"); }
+}
+
+async function loadHierarchy() {
+  try {
+    var insts = await api("GET", "/api/admin/institutions");
+    var tree = [];
+    for (var i = 0; i < insts.length; i++) {
+      var inst = insts[i];
+      var users = await api("GET", "/api/admin/institutions/" + encodeURIComponent(inst.id) + "/users");
+      var directors = users.filter(function(u){ return u.role === "director"; });
+      var caregivers = users.filter(function(u){ return u.role === "caregiver"; });
+      var family = users.filter(function(u){ return u.role === "family"; });
+      tree.push({ institution: inst, directors: directors, caregivers: caregivers, family: family });
+    }
+    renderHierarchyTree(tree);
+  } catch(e) { toast(e.message, "error"); }
+}
+
+function renderHierarchyTree(tree) {
+  var el = document.getElementById("hierarchyTree");
+  if (!tree.length) { el.innerHTML = '<div class="empty-state" style="text-align:center;padding:40px">暂无机构数据</div>'; return; }
+  el.innerHTML = tree.map(function(node){
+    var inst = node.institution;
+    var total = node.directors.length + node.caregivers.length + node.family.length;
+    return '<div style="margin-bottom:20px;border:1px solid var(--border);border-radius:8px;overflow:hidden">' +
+      '<div style="background:var(--sidebar-bg);color:#fff;padding:10px 16px;display:flex;align-items:center;justify-content:space-between">' +
+        '<strong>' + escHtml(inst.name || inst.id) + '</strong>' +
+        '<span style="font-size:12px;opacity:0.8">' + statusBadge(inst.status) + ' 用户: ' + total + '</span>' +
+      '</div>' +
+      '<div style="padding:12px 16px">' +
+        '<div style="margin-bottom:8px"><strong style="color:#7c3aed">院长 (' + node.directors.length + ')</strong></div>' +
+        (node.directors.length ? '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px">' + node.directors.map(function(u){ return '<span style="padding:2px 8px;background:#ede9fe;border-radius:4px;font-size:12px">' + escHtml(u.displayName || u.username) + (u.status === "disabled" ? ' <span style="color:#dc2626">(禁用)</span>' : '') + '</span>'; }).join("") + '</div>' : '<div style="color:var(--text-secondary);font-size:12px;margin-bottom:12px">无</div>') +
+        '<div style="margin-bottom:8px"><strong style="color:var(--primary)">护工 (' + node.caregivers.length + ')</strong></div>' +
+        (node.caregivers.length ? '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px">' + node.caregivers.map(function(u){ return '<span style="padding:2px 8px;background:var(--primary-light);border-radius:4px;font-size:12px">' + escHtml(u.displayName || u.username) + (u.status === "disabled" ? ' <span style="color:#dc2626">(禁用)</span>' : '') + '</span>'; }).join("") + '</div>' : '<div style="color:var(--text-secondary);font-size:12px;margin-bottom:12px">无</div>') +
+        '<div><strong style="color:#db2777">家属 (' + node.family.length + ')</strong></div>' +
+        (node.family.length ? '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">' + node.family.map(function(u){ return '<span style="padding:2px 8px;background:#fce7f3;border-radius:4px;font-size:12px">' + escHtml(u.displayName || u.username) + (u.status === "disabled" ? ' <span style="color:#dc2626">(禁用)</span>' : '') + '</span>'; }).join("") + '</div>' : '<div style="color:var(--text-secondary);font-size:12px">无</div>') +
+      '</div></div>';
+  }).join("");
 }
 
 /* ====== EVENT HANDLERS ====== */
@@ -813,6 +859,9 @@ document.getElementById("templatesTable").addEventListener("click", function(e){
   });
 });
 
+// Hierarchy refresh
+document.getElementById("btnRefreshHierarchy").addEventListener("click", loadHierarchy);
+
 // Create Institution
 document.getElementById("btnCreateInstitution").addEventListener("click", function(){
   document.getElementById("ciId").value = "";
@@ -860,7 +909,8 @@ document.getElementById("qSubmit").addEventListener("click", function(){
 // Create User
 document.getElementById("btnCreateUser").addEventListener("click", function(){
   if (!S.selectedInstId) { toast("请先选择一个机构", "error"); return; }
-  document.getElementById("cuInstName").value = S.selectedInstId;
+  var inst = S.institutions.find(function(i){ return i.id === S.selectedInstId; });
+  document.getElementById("cuInstName").value = (inst && inst.name) || S.selectedInstId;
   document.getElementById("cuUsername").value = "";
   document.getElementById("cuPassword").value = "";
   document.getElementById("cuDisplayName").value = "";

@@ -97,11 +97,20 @@ export async function requestJson(path, init = {}) {
     throw new Error("云端地址未配置");
   }
 
-  const response = await fetch(`${baseUrl}${path}`, {
-    method: init.method || "GET",
-    headers: buildHeaders(init.headers || {}),
-    body: init.body,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(function () { controller.abort(); }, init.timeout || 30000);
+
+  let response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      method: init.method || "GET",
+      headers: buildHeaders(init.headers || {}),
+      body: init.body,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   const rawText = await response.text();
   let payload = null;
@@ -182,6 +191,13 @@ export async function uploadPublishedTask(task) {
   });
 }
 
+export async function uploadPublishedTasksBulk(tasks = []) {
+  return requestJson("/api/tasks/bulk", {
+    method: "POST",
+    body: JSON.stringify({ tasks }),
+  });
+}
+
 export async function fetchPublishedTasks(filters = {}) {
   const search = new URLSearchParams();
 
@@ -223,4 +239,96 @@ export async function fetchLatestAppRelease(filters = {}) {
 
   const suffix = search.toString() ? `?${search.toString()}` : "";
   return requestJson(`/api/app-releases/latest${suffix}`);
+}
+
+export async function createAuthUser(payload) {
+  return requestJson("/api/auth/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchAuthUsers(institutionId) {
+  return requestJson(`/api/auth/users?institutionId=${encodeURIComponent(institutionId)}`);
+}
+
+export async function disableAuthUser(userId) {
+  return requestJson(`/api/auth/users/${encodeURIComponent(userId)}/disable`, { method: "PUT" });
+}
+
+export async function fetchCaregivers(filters = {}) {
+  const search = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/caregivers${suffix}`);
+}
+
+export async function createCaregiver(payload) {
+  return requestJson("/api/caregivers", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updateCaregiver(id, payload) {
+  return requestJson(`/api/caregivers/${encodeURIComponent(id)}/update`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function deleteCaregiver(id) {
+  return requestJson(`/api/caregivers/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function createTaskCompletion(payload) {
+  return requestJson("/api/task-completions", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function fetchTaskCompletions(filters = {}) {
+  const search = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/task-completions${suffix}`);
+}
+
+export async function createVital(payload) {
+  return requestJson("/api/vitals", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function fetchVitals(filters = {}) {
+  const search = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/vitals${suffix}`);
+}
+
+export async function createAnomaly(payload) {
+  return requestJson("/api/anomalies", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function fetchAnomalies(filters = {}) {
+  const search = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/anomalies${suffix}`);
+}
+
+export async function updateAnomaly(id, payload) {
+  return requestJson(`/api/anomalies/${encodeURIComponent(id)}/update`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function updateInstitution(payload) {
+  return requestJson("/api/institution/update", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function fetchInstitution(institutionId = "") {
+  const suffix = institutionId ? `?institutionId=${encodeURIComponent(institutionId)}` : "";
+  return requestJson(`/api/institution${suffix}`);
 }

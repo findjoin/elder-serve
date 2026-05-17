@@ -25,7 +25,7 @@ function uniqueElders(state, tasks, anomalies) {
 export function renderHandoverPage({ state, selectors }) {
   const pendingTasks = selectors.pendingTasks.slice(0, 4);
   const riskTasks = selectors.riskTasks.slice(0, 4);
-  const focusElders = uniqueElders(state, riskTasks, state.anomalies.filter((item) => item.level !== "low")).slice(0, 4);
+  const focusElders = uniqueElders(state, riskTasks, state.anomalies).slice(0, 4);
   const latestRecord = state.handoverRecords[0];
   const unreadCount = state.messages.filter((item) => !item.read).length;
 

@@ -533,26 +533,7 @@ const vitals = [
   { elderId: "elder-demo-505", bloodPressure: "155/96", bloodSugar: "5.8", temperature: "36.4", time: "09:05" },
 ];
 
-const anomalies = [
-  {
-    id: "anomaly-1",
-    type: "老人身体不适",
-    level: "high",
-    elderId: "elder-demo-505",
-    time: "10:18",
-    status: "已同步院长端",
-    note: "老人头晕，已卧床休息，等待复测结果。",
-  },
-  {
-    id: "anomaly-2",
-    type: "物资短缺",
-    level: "medium",
-    elderId: null,
-    time: "10:40",
-    status: "待采购",
-    note: "护理垫余量不足，预计只够支撑到晚班前。",
-  },
-];
+const anomalies = [];
 
 const messages = [
   { id: "message-1", title: "今日早班排班已确认", time: "06:40", read: false },
@@ -785,8 +766,24 @@ function getElderById(elderId, elderList = elders) {
   return elderList.find((item) => item.id === elderId);
 }
 
-function getCaregiverForFloor(floor, caregiverList = caregivers) {
-  return caregiverList.find((item) => item.floor === floor) || caregiverList[0];
+function getCaregiverForFloor(floor, caregiverList = caregivers, elderId = null, elderList = elders) {
+  const floorCaregivers = caregiverList.filter((item) => item.floor === floor);
+  if (!floorCaregivers.length) return caregiverList[0] || null;
+
+  if (elderId) {
+    const elder = elderList.find((e) => e.id === elderId);
+    if (elder && elder.assignedCaregiverId) {
+      const assigned = floorCaregivers.find((c) => c.id === elder.assignedCaregiverId);
+      if (assigned) return assigned;
+    }
+  }
+
+  if (floorCaregivers.length === 1 || !elderId) return floorCaregivers[0];
+
+  const floorElders = elderList.filter((e) => e.floor === floor).sort((a, b) => a.room.localeCompare(b.room));
+  const index = floorElders.findIndex((e) => e.id === elderId);
+  if (index < 0) return floorCaregivers[0];
+  return floorCaregivers[index % floorCaregivers.length];
 }
 
 function parseScheduleStart(value = "") {
@@ -826,7 +823,7 @@ export function createCareRecordDraft({
   reportTemplate = dailyReportTemplate,
 } = {}) {
   const elder = getElderById(elderId, elderList) || elderList[0] || null;
-  const defaultCaregiver = elder ? getCaregiverForFloor(elder.floor, caregiverList) : caregiverList[0] || null;
+  const defaultCaregiver = elder ? getCaregiverForFloor(elder.floor, caregiverList, elder.id, elderList) : caregiverList[0] || null;
   const careLevel = mapLevelToCareRecordLevel(elder?.level);
   const requiresAssist = careLevel.value !== "self-care";
   const needsPadCare = careLevel.value === "full-care";
@@ -923,141 +920,11 @@ export function createDirectorCareRecordDraft(options = {}) {
   });
 }
 
-export function buildTasksFromConfiguration({
-  elderCarePlans,
-  taskTemplates,
-  elders,
-  caregivers,
-  dailyReportTemplate: reportTemplate = null,
-  recordDate = runtimeDate,
-  previousTasks = [],
-}) {
-  const previousByPlanItemId = new Map(previousTasks.map((task) => [task.planItemId, task]));
-  const previousByFallback = new Map();
-  previousTasks.forEach((task) => {
-    const key = `${task.elderId || ""}|${task.title || ""}|${task.window || task.schedule || ""}`;
-    if (key.length > 2) previousByFallback.set(key, task);
-  });
-  const nextSeed =
-    previousTasks.reduce((max, task) => {
-      const match = /task-(\d+)/.exec(task.id || "");
-      return match ? Math.max(max, Number(match[1])) : max;
-    }, 0) + 1;
-
-  let taskCounter = nextSeed;
-  const tasks = [];
-
-  elderCarePlans.forEach((plan) => {
-    const elder = getElderById(plan.elderId, elders);
-    if (!elder) return;
-
-    plan.items.forEach((item) => {
-      const template = getTemplateById(item.templateId, taskTemplates);
-      if (!template || !template.isActive || item.isEnabled === false) return;
-
-      const previousTask = previousByPlanItemId.get(item.id) || previousByFallback.get(`${elder.id}|${template.title}|${item.schedule}`);
-      const floorOwner = getCaregiverForFloor(elder.floor, caregivers);
-      const defaultCaregiverId = item.assignment === "floor-owner" ? floorOwner?.id || "" : "";
-      const caregiverId = previousTask ? previousTask.caregiverId : defaultCaregiverId;
-      const assignmentStatus = previousTask?.assignmentStatus || (caregiverId ? "accepted" : "unassigned");
-
-      tasks.push({
-        id: previousTask?.id || `task-${taskCounter++}`,
-        planId: plan.id,
-        planItemId: item.id,
-        elderId: elder.id,
-        caregiverId,
-        defaultCaregiverId,
-        templateId: template.id,
-        title: item.title || template.title,
-        schedule: item.schedule,
-        window: item.schedule,
-        requirePhoto: item.requirePhoto ?? template.requirePhoto,
-        status: previousTask?.status || item.initialStatus || "pending",
-        note: item.note || template.defaultNote,
-        category: template.category,
-        templateGroup: template.group,
-        source: previousTask?.source || (item.assignment === "manual" ? "manual" : "plan"),
-        assignmentMode: item.assignment,
-        assignmentStatus,
-        publishedAt: previousTask?.publishedAt || "",
-        acceptedAt: previousTask?.acceptedAt || (assignmentStatus === "accepted" ? previousTask?.acceptedAt || "" : ""),
-        exceptionNote: previousTask?.exceptionNote || "",
-        exception: previousTask?.exception || "",
-        exceptionType: previousTask?.exceptionType || "",
-        exceptionEvidence: previousTask?.exceptionEvidence || [],
-        exceptionReportedAt: previousTask?.exceptionReportedAt || "",
-      });
-    });
-  });
-
-  if (reportTemplate?.sections?.length) {
-    const reportTemplateCareLevel = reportTemplate.careLevel || "all";
-    const reportTemplateId = reportTemplate.id || "daily-report-qinghe-basic";
-    const hasReportTemplateAssignments = elders.some((elder) => elder.reportTemplateId);
-    elders.forEach((elder) => {
-      if (hasReportTemplateAssignments && elder.reportTemplateId !== reportTemplateId) return;
-      if (reportTemplateCareLevel !== "all" && elder.level !== reportTemplateCareLevel) return;
-
-      const floorOwner = getCaregiverForFloor(elder.floor, caregivers);
-      const existingResponsibleTask = tasks.find((task) => {
-        const caregiver = caregivers.find((item) => item.id === task.caregiverId);
-        return task.elderId === elder.id && caregiver && caregiver.floor === elder.floor;
-      });
-      const defaultCaregiverId = existingResponsibleTask?.caregiverId || floorOwner?.id || "";
-
-      reportTemplate.sections.forEach((section) => {
-        (section.items || []).forEach((item) => {
-          if (!item?.id || !isReportTemplateItemDue(item, recordDate)) return;
-
-          const planItemId = `report-${recordDate}-${elder.id}-${section.id}-${item.id}`;
-          const previousTask = previousByPlanItemId.get(planItemId) || previousByFallback.get(`${elder.id}|${item.label || "日报护理任务"}|${item.timeWindow}`);
-          const caregiverId = previousTask ? previousTask.caregiverId : defaultCaregiverId;
-          const assignmentStatus = previousTask?.assignmentStatus || (caregiverId ? "published" : "unassigned");
-          const schedule = parseScheduleStart(item.timeWindow);
-
-          tasks.push({
-            id: previousTask?.id || planItemId,
-            planId: `daily-report-${elder.id}`,
-            planItemId,
-            elderId: elder.id,
-            caregiverId,
-            defaultCaregiverId,
-            templateId: `daily-report:${item.id}`,
-            title: item.label || "日报护理任务",
-            schedule,
-            window: item.timeWindow || schedule,
-            requirePhoto: Boolean(item.requirePhoto),
-            status: previousTask?.status || "pending",
-            note: `${section.title || "日报模板"} · 日报自动生成`,
-            category: section.title || "日报模板",
-            templateGroup: "daily-report",
-            source: previousTask?.source || "report-template",
-            assignmentMode: "report-template",
-            assignmentStatus,
-            publishedAt: previousTask?.publishedAt || (caregiverId ? schedule : ""),
-            acceptedAt: previousTask?.acceptedAt || "",
-            exceptionNote: previousTask?.exceptionNote || "",
-            exception: previousTask?.exception || "",
-            exceptionType: previousTask?.exceptionType || "",
-            exceptionEvidence: previousTask?.exceptionEvidence || [],
-            exceptionReportedAt: previousTask?.exceptionReportedAt || "",
-          });
-        });
-      });
-    });
-  }
-
-  return tasks.sort((left, right) => {
-    const bySchedule = left.schedule.localeCompare(right.schedule);
-    if (bySchedule !== 0) return bySchedule;
-    return (left.id || "").localeCompare(right.id || "");
-  });
-}
-
 export function buildDirectorOverview({ tasks, caregivers, elders }) {
-  const expected = caregivers.length;
-  const checkedIn = caregivers.filter((item) => item.status === "on-duty").length;
+  const registeredCaregivers = caregivers.filter((c) => c.cloudUserId);
+  const totalCaregivers = caregivers.length;
+  const expected = registeredCaregivers.length;
+  const checkedIn = registeredCaregivers.filter((item) => item.status === "on-duty").length;
   const completed = tasks.filter((item) => item.status === "completed").length;
   const risk = tasks.filter((item) => item.status === "risk" || item.status === "refused").length;
   const issue = tasks.filter((item) => item.status === "risk").length;
@@ -1120,14 +987,7 @@ export function buildDirectorOverview({ tasks, caregivers, elders }) {
 }
 
 export function createMockState() {
-  const tasks = buildTasksFromConfiguration({
-    elderCarePlans,
-    taskTemplates,
-    elders,
-    caregivers,
-    dailyReportTemplate,
-    recordDate: director.date,
-  });
+  const tasks = [];
   const overview = buildDirectorOverview({ tasks, caregivers, elders });
   const directorCareRecordDraft = createDirectorCareRecordDraft({
     elderId: elders[0]?.id,
@@ -1211,6 +1071,7 @@ export function createMockState() {
     caregivers,
     taskTemplates,
     dailyReportTemplate: cloneDailyReportTemplate(dailyReportTemplate),
+    dailyReportTemplates: { "daily-report-qinghe-basic": cloneDailyReportTemplate(dailyReportTemplate) },
     elderCarePlans,
     family,
     director: {
@@ -1292,6 +1153,8 @@ export function createMockState() {
         institutions: [],
         items: [],
       },
+      directorReportTemplateEditingId: "",
+      directorTaskDetailId: "",
       directorPlanDraft: null,
       directorPlanItemDraft: null,
       directorPersonnelType: "caregiver",

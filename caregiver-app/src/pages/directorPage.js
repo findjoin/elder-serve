@@ -353,6 +353,22 @@ function getInboxDayReports(dateString, reports = []) {
   });
 }
 
+function getElderMonthReportMap(elderId, year, month, targetDay, allReports) {
+  const prefix = `${year}-${String(month).padStart(2, "0")}`;
+  const dayMap = new Map();
+
+  (allReports || []).forEach((item) => {
+    if (item.elderId !== elderId && (item.elderId || item.id) !== elderId) return;
+    const dateStr = getCareRecordDate(item);
+    if (!dateStr || !dateStr.startsWith(prefix)) return;
+    const day = parseInt(dateStr.slice(-2), 10);
+    if (!day || day > targetDay || dayMap.has(day)) return;
+    dayMap.set(day, item);
+  });
+
+  return dayMap;
+}
+
 function getInboxDayTone(summary) {
   if (summary.isFuture) return "future";
   if (!summary.expectedCount) return "empty";
@@ -568,6 +584,50 @@ function renderDirectorInboxExportDialog(state, selectors) {
   `;
 }
 
+function renderMonthlyCompilation(batchDate, allCloudReports, template) {
+  if (!batchDate || !allCloudReports || !allCloudReports.length) return "";
+  if (!template || !(template.sections || []).length) return "";
+
+  const parts = String(batchDate).split("-");
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10);
+  const targetDay = parseInt(parts[2], 10);
+  const prefix = `${parts[0]}-${parts[1]}`;
+  const monthLabel = `${year}年${month}月`;
+
+  const elders = new Map();
+  (allCloudReports || []).forEach((item) => {
+    const dateStr = getCareRecordDate(item);
+    if (!dateStr || !dateStr.startsWith(prefix)) return;
+    const day = parseInt(dateStr.slice(-2), 10);
+    if (!day || day > targetDay) return;
+    const elderId = item.elderId || item.id;
+    if (!elderId) return;
+    if (!elders.has(elderId)) elders.set(elderId, []);
+    elders.get(elderId).push(item);
+  });
+
+  if (!elders.size) return "";
+
+  const sortedElders = Array.from(elders.entries()).sort(([, a], [, b]) => {
+    const aFloor = Number.parseInt(a[0]?.floorLabel || a[0]?.floor || "0", 10) || 0;
+    const bFloor = Number.parseInt(b[0]?.floorLabel || b[0]?.floor || "0", 10) || 0;
+    if (aFloor !== bFloor) return aFloor - bFloor;
+    const aRoom = Number.parseInt(a[0]?.room || "0", 10) || 0;
+    const bRoom = Number.parseInt(b[0]?.room || "0", 10) || 0;
+    return aRoom - bRoom;
+  });
+
+  return sortedElders
+    .map(([elderId, reports]) => {
+      const dayMap = getElderMonthReportMap(elderId, year, month, targetDay, reports);
+      const firstReport = reports[0] || {};
+      const elderName = firstReport.elderName || elderId;
+      return renderMonthlyCareSheet(elderName, firstReport, dayMap, template, targetDay, monthLabel);
+    })
+    .join("");
+}
+
 function renderDirectorCareRecordPreview(state, selectors) {
   if (!state.ui.directorCareRecordPreviewOpen) return "";
 
@@ -575,7 +635,19 @@ function renderDirectorCareRecordPreview(state, selectors) {
   const records = batchDate
     ? getInboxDayReports(batchDate, selectors.directorCloudReports || [])
     : [selectors.directorCareRecordDraft].filter(Boolean);
-  const title = batchDate ? `${formatCalendarDateLabel(batchDate)}日报导出` : "监管归档表（A4）预览";
+
+  const monthlyContent = batchDate
+    ? renderMonthlyCompilation(batchDate, selectors.directorCloudReports || [], selectors.dailyReportTemplate)
+    : "";
+  const useMonthly = Boolean(monthlyContent);
+
+  const title = useMonthly
+    ? `${formatCalendarDateLabel(batchDate)} 月度汇总导出`
+    : batchDate
+      ? `${formatCalendarDateLabel(batchDate)}日报导出`
+      : "监管归档表（A4）预览";
+
+  const pillLabel = useMonthly ? `${records.length} 位老人` : `${records.length} 份`;
 
   return `
     <section class="director-care-record-preview">
@@ -583,13 +655,15 @@ function renderDirectorCareRecordPreview(state, selectors) {
       <div class="director-care-record-preview__dialog">
         <div class="director-care-record-preview__topbar">
           <strong>${title}</strong>
-          ${renderStatusPill(`${records.length} 份`, "success")}
+          ${renderStatusPill(pillLabel, "success")}
         </div>
         <div class="director-care-record-preview__body">
           ${
-            records.length
-              ? `<div class="care-record-export-batch" data-care-record-export-batch>${records.map(renderCareRecordSheet).join("")}</div>`
-              : `<div class="empty-state empty-state--soft">云端没有可导出的日报。</div>`
+            useMonthly
+              ? `<div class="care-record-export-batch" data-care-record-export-batch>${monthlyContent}</div>`
+              : records.length
+                ? `<div class="care-record-export-batch" data-care-record-export-batch>${records.map(renderCareRecordSheet).join("")}</div>`
+                : `<div class="empty-state empty-state--soft">云端没有可导出的日报。</div>`
           }
         </div>
         <div class="director-care-record-preview__actions">
@@ -1091,6 +1165,78 @@ function renderReadExceptionCard(report) {
   `;
 }
 
+export function renderDirectorTaskDetailDialog(task, state = {}) {
+  if (!task || !state.ui?.directorTaskDetailId) return "";
+
+  const elder = (state.elders || []).find((e) => e.id === task.elderId) || {};
+  const caregiver = (state.caregivers || []).find((c) => c.id === task.caregiverId) || {};
+  const status = getTaskStatusForTimeline(task);
+  const evidenceList = [];
+  if (task.exceptionEvidence) {
+    try {
+      const parsed = typeof task.exceptionEvidence === "string" ? JSON.parse(task.exceptionEvidence) : task.exceptionEvidence;
+      if (Array.isArray(parsed)) evidenceList.push(...parsed.filter((e) => e && e.dataUrl));
+    } catch (_) {}
+  }
+  if (task.recordEvidence) {
+    try {
+      const parsed = typeof task.recordEvidence === "string" ? JSON.parse(task.recordEvidence) : task.recordEvidence;
+      if (Array.isArray(parsed)) evidenceList.push(...parsed.filter((e) => e && e.dataUrl));
+    } catch (_) {}
+  }
+
+  return `
+    <section class="director-dialog-backdrop" data-action="close-director-task-detail" aria-label="关闭详情"></section>
+    <section class="director-dialog-shell director-dialog-shell--wide">
+      <article class="director-dialog-card director-task-detail">
+        <div class="director-dialog-head">
+          <div>
+            <strong>任务详情</strong>
+            <small>${task.schedule} · ${elder.room || ""}室 · ${elder.name || task.elderId}</small>
+          </div>
+          <button type="button" class="icon-button" data-action="close-director-task-detail">X</button>
+        </div>
+
+        <div class="director-dialog-body">
+          <div class="director-task-detail__info">
+            <p><strong>任务：</strong>${task.title}</p>
+            <p><strong>护工：</strong>${caregiver.name || "未分配"}</p>
+            <p><strong>状态：</strong>${renderStatusPill(status.label, status.tone)}</p>
+          </div>
+
+          ${task.recordNote ? `
+            <div class="director-task-detail__section">
+              <strong>护工记录</strong>
+              <p class="director-task-detail__note">${task.recordNote}</p>
+            </div>
+          ` : ""}
+
+          ${task.exceptionNote ? `
+            <div class="director-task-detail__section director-task-detail__section--alert">
+              <strong>异常上报${task.exceptionType ? ` · ${task.exceptionType}` : ""}</strong>
+              <p class="director-task-detail__note">${task.exceptionNote}</p>
+              ${task.exceptionReportedAt ? `<small>上报时间：${task.exceptionReportedAt}</small>` : ""}
+            </div>
+          ` : ""}
+
+          ${evidenceList.length ? `
+            <div class="director-task-detail__section">
+              <strong>拍照留痕（${evidenceList.length}张）</strong>
+              <div class="director-task-detail__photos">
+                ${evidenceList.map((e) => `<img src="${e.dataUrl}" alt="${e.name || "照片"}" />`).join("")}
+              </div>
+            </div>
+          ` : ""}
+        </div>
+
+        <div class="director-dialog-actions">
+          <button type="button" class="btn btn--primary" data-action="close-director-task-detail">关闭</button>
+        </div>
+      </article>
+    </section>
+  `;
+}
+
 function renderSupportShortcut(route, icon, title, meta, tone = "primary") {
   return `
     <button class="director-support-card director-support-card--${tone}" data-action="navigate" data-route="${route}">
@@ -1298,7 +1444,7 @@ function renderFloorStaffDetail(selectedFloor, staff = []) {
             ? staff
                 .map(
                   (caregiver) => `
-                    <div class="director-floor-staff-row">
+                    <div class="director-floor-staff-row" data-drop-caregiver-id="${caregiver.id}">
                       <div class="director-floor-staff-row__main">
                         <strong>${caregiver.name}</strong>
                         <span>${caregiver.role || "护工"}</span>
@@ -1306,7 +1452,7 @@ function renderFloorStaffDetail(selectedFloor, staff = []) {
                       <div class="director-floor-staff-row__rooms">
                         ${
                           caregiver.rooms.length
-                            ? caregiver.rooms.map((room) => `<span>${room.room}室 · ${room.elderName}</span>`).join("")
+                            ? caregiver.rooms.map((room) => `<span class="director-floor-room-tag" draggable="true" data-elder-id="${room.elderId}" data-floor="${room.floor}" title="拖动到其他护工即可重新分配">${room.room}室 · ${room.elderName}</span>`).join("")
                             : "<em>暂无负责房间</em>"
                         }
                       </div>
@@ -1507,10 +1653,110 @@ export function renderSelectedPlan(plan, resident, isTimelineOpen = false) {
   `;
 }
 
-function renderPlanTimelineSidebar(plan, resident, isOpen = false) {
+function getTaskStatusForTimeline(task) {
+  if (task.status === "completed") return { label: "已完成", tone: "success" };
+  if (task.status === "risk") return { label: "异常", tone: "error" };
+  if (task.status === "refused") return { label: "不配合", tone: "error" };
+  const now = new Date();
+  const currentTime = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  if (task.schedule && task.schedule < currentTime) return { label: "超时", tone: "overdue" };
+  return { label: "未完成", tone: "muted" };
+}
+
+function renderDirectorTimelineTaskEntry(task) {
+  const status = getTaskStatusForTimeline(task);
+  const hasRecord = !!(task.recordNote || task.recordEvidence);
+  const hasException = !!(task.exceptionNote || task.exceptionEvidence || task.status === "risk");
+  const clickable = hasRecord || hasException;
+  const clickAction = clickable ? `data-action="director-view-task-detail" data-value="${task.id}"` : "";
+  const badge = hasException ? `<span class="timeline-badge timeline-badge--alert">!</span>` : hasRecord ? `<span class="timeline-badge timeline-badge--info">i</span>` : "";
+
+  return `
+    <article class="director-timeline__item director-timeline__item--task ${clickable ? "is-clickable" : ""}" ${clickAction} data-task-id="${task.id}" data-task-tone="${status.tone}" data-task-status="${status.label}">
+      <div class="director-timeline__time director-timeline__time--plan">
+        <strong>${task.schedule || "--:--"}</strong>
+        <small>${task.source === "report-template" ? "日报" : "任务"}</small>
+      </div>
+      <div class="director-timeline__line">
+        <span class="director-timeline__dot is-active director-timeline__dot--${status.tone}"></span>
+      </div>
+      <div class="director-timeline__card director-timeline__card--plan">
+        <div class="director-timeline__card-head">
+          <div>
+            <strong>${task.title}</strong>
+            <small>${task.source === "report-template" ? "日报模板" : "护理任务"}</small>
+          </div>
+          <div class="director-timeline__card-badges">
+            ${badge}
+            ${renderStatusPill(status.label, status.tone)}
+          </div>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function getTimelineTaskDisplayKey(task = {}) {
+  return [
+    task.elderId || "",
+    task.templateId || "",
+    task.title || "",
+    task.schedule || task.window || "",
+  ].join("|");
+}
+
+function preferTimelineTask(candidate, current, targetDate = "") {
+  if (!current) return candidate;
+  const candidateExactDate = targetDate && candidate.recordDate === targetDate;
+  const currentExactDate = targetDate && current.recordDate === targetDate;
+  if (candidateExactDate !== currentExactDate) return candidateExactDate ? candidate : current;
+
+  const candidateUpdated = String(candidate.updatedAt || candidate.completedAt || candidate.publishedAt || "");
+  const currentUpdated = String(current.updatedAt || current.completedAt || current.publishedAt || "");
+  if (candidateUpdated && currentUpdated && candidateUpdated !== currentUpdated) {
+    return candidateUpdated > currentUpdated ? candidate : current;
+  }
+
+  const candidateHandled = ["completed", "risk", "refused"].includes(candidate.status);
+  const currentHandled = ["completed", "risk", "refused"].includes(current.status);
+  if (candidateHandled !== currentHandled) return candidateHandled ? candidate : current;
+
+  return current;
+}
+
+function getVisibleReportTimelineTasks(tasks = [], resident, state = {}) {
+  if (!resident) return [];
+  const targetDate = state?.director?.date || "";
+  const candidates = tasks.filter((task) => {
+    if (task.source !== "report-template") return false;
+    if (task.elderId !== resident.id) return false;
+    if (task.status === "cancelled") return false;
+    if (targetDate && task.recordDate && task.recordDate !== targetDate) return false;
+    return true;
+  });
+
+  const byDisplayKey = new Map();
+  candidates.forEach((task) => {
+    const key = getTimelineTaskDisplayKey(task);
+    byDisplayKey.set(key, preferTimelineTask(task, byDisplayKey.get(key), targetDate));
+  });
+
+  return Array.from(byDisplayKey.values());
+}
+
+function renderPlanTimelineSidebar(plan, resident, isOpen = false, tasks = [], state = {}) {
   if (!resident) return "";
 
-  if (!plan) {
+  const reportTasks = getVisibleReportTimelineTasks(tasks, resident, state);
+  const planItems = plan ? [...(plan.timelineTasks?.length ? plan.timelineTasks : plan.items)] : [];
+  const allItems = [
+    ...planItems.map((item) => ({ ...item, _type: "plan" })),
+    ...reportTasks.map((task) => ({ ...task, _type: "task" })),
+  ].sort((left, right) => String(left.schedule || "").localeCompare(String(right.schedule || "")));
+
+  const hasAnyContent = plan || reportTasks.length > 0;
+
+  if (!hasAnyContent) {
     return `
       <aside class="director-plan-sidebar ${isOpen ? "is-open" : ""}">
         <div class="director-plan-sidebar__panel">
@@ -1534,11 +1780,36 @@ function renderPlanTimelineSidebar(plan, resident, isOpen = false) {
     `;
   }
 
-  const timelineItems = [...(plan.timelineTasks?.length ? plan.timelineTasks : plan.items)].sort((left, right) =>
-    String(left.schedule || "").localeCompare(String(right.schedule || "")),
-  );
-  const periodSummary = summarizePlanPeriods(timelineItems);
+  if (!plan) {
+    return `
+      <aside class="director-plan-sidebar ${isOpen ? "is-open" : ""}">
+        <div class="director-plan-sidebar__panel">
+          <div class="director-plan-sidebar__head">
+            <div>
+              <p>${resident.room}室 · ${resident.elderName}</p>
+              <strong>日报任务时间轴</strong>
+              <small>${resident.level} · ${reportTasks.length}项任务</small>
+            </div>
+          </div>
+
+          <section class="director-plan-sidebar__timeline">
+            <div class="director-plan-sidebar__section-head">
+              <strong>从早到晚</strong>
+              ${renderStatusPill(`${reportTasks.length}项任务`, "success")}
+            </div>
+            <div class="director-plan-timeline director-plan-timeline--sidebar">
+              ${allItems.map((item) => renderDirectorTimelineTaskEntry(item)).join("")}
+            </div>
+          </section>
+
+        </div>
+      </aside>
+    `;
+  }
+
+  const periodSummary = summarizePlanPeriods(planItems);
   const manualTaskCount = plan.manualCount || 0;
+  const totalCount = allItems.length;
 
   return `
     <aside class="director-plan-sidebar ${isOpen ? "is-open" : ""}">
@@ -1547,7 +1818,7 @@ function renderPlanTimelineSidebar(plan, resident, isOpen = false) {
           <div>
             <p>${plan.elder.room}室 · ${plan.elder.name}</p>
             <strong>全天护理时间轴</strong>
-            <small>${plan.level} · ${timelineItems.length}项任务</small>
+            <small>${plan.level} · ${totalCount}项任务</small>
           </div>
         </div>
 
@@ -1573,10 +1844,10 @@ function renderPlanTimelineSidebar(plan, resident, isOpen = false) {
         <section class="director-plan-sidebar__timeline">
           <div class="director-plan-sidebar__section-head">
             <strong>从早到晚</strong>
-            ${renderStatusPill(`${timelineItems.length}项任务`, "success")}
+            ${renderStatusPill(`${totalCount}项任务`, "success")}
           </div>
           <div class="director-plan-timeline director-plan-timeline--sidebar">
-            ${timelineItems.map((item) => renderPlanTimelineEntry(item)).join("")}
+            ${allItems.map((item) => item._type === "task" ? renderDirectorTimelineTaskEntry(item) : renderPlanTimelineEntry(item)).join("")}
           </div>
         </section>
 
@@ -2364,12 +2635,16 @@ function renderReportTemplateImportDialog(importState = {}) {
   `;
 }
 
-function renderReportTemplateEditor(draft, importState = {}, scheduleSectionId = "", transient = {}, careLevelOptions = []) {
+function renderReportTemplateEditor(draft, importState = {}, scheduleSectionId = "", transient = {}, careLevelOptions = [], savedTemplates = []) {
   if (!draft) return "";
   const reportTemplateCareLevelOptions = [
     { value: "all", label: "全部护理等级" },
     ...(careLevelOptions || []).map((item) => ({ value: item, label: item })),
   ];
+
+  const importedTemplate = importState.selectedTemplateId
+    ? (importState.templates || []).find((t) => t.id === importState.selectedTemplateId)
+    : null;
 
   return `
     <section class="director-report-template-modal">
@@ -2385,6 +2660,8 @@ function renderReportTemplateEditor(draft, importState = {}, scheduleSectionId =
               ${renderStatusPill(`版本 ${draft.version || 1}`, "success")}
             </div>
           </div>
+
+          ${importedTemplate ? `<div class="director-report-template-import-info">当前导入模板：${importedTemplate.title || importedTemplate.id}</div>` : ""}
 
           <div class="director-form-grid">
             <label class="director-field">
@@ -2413,11 +2690,120 @@ function renderReportTemplateEditor(draft, importState = {}, scheduleSectionId =
             <button class="button button--secondary" type="button" data-action="open-report-template-preview">预览</button>
             <button class="button button--primary" type="button" data-action="save-report-template-editor">保存模板</button>
           </div>
+
+          ${savedTemplates.length ? `
+            <div class="director-report-template-saved-list">
+              <div class="director-report-template-saved-list__title">已保存的命名模板</div>
+              ${savedTemplates.map((tpl) => `<div class="director-report-template-saved-item" data-action="edit-saved-report-template" data-value="${tpl.id}">${tpl.title} <small>${tpl.careLevel || "全部"} · 版本 ${tpl.version || 1}</small></div>`).join("")}
+            </div>
+          ` : ""}
         </form>
       </div>
       ${renderReportTemplateImportDialog(importState)}
       ${renderReportTemplateSchedulePage(draft, scheduleSectionId)}
     </section>
+  `;
+}
+
+function renderMonthlyCareSheet(elderName, elderInfo, dayReportsMap, template, targetDay, monthLabel) {
+  const sections = (template && template.sections) ? template.sections : [];
+  const days = Array.from({ length: targetDay }, (_, i) => i + 1);
+  const info = elderInfo || {};
+
+  return `
+    <article class="care-record-sheet care-record-sheet--monthly" data-care-record-sheet>
+      <header class="care-record-sheet__header">
+        <p>${renderCareRecordSheetField(info.institutionName)}</p>
+        <h2>护理记录月报表</h2>
+        <div class="care-record-sheet__header-meta">
+          <span>月份：${monthLabel}</span>
+          <span>记录截止：${targetDay}日</span>
+        </div>
+      </header>
+
+      <section class="care-record-sheet__block">
+        <div class="care-record-sheet__section-title">一、基本信息</div>
+        <table class="care-record-sheet__table care-record-sheet__table--meta">
+          <tbody>
+            <tr>
+              <th>老人姓名</th>
+              <td>${renderCareRecordSheetField(elderName)}</td>
+              <th>房间号</th>
+              <td>${renderCareRecordSheetField(info.room)}</td>
+            </tr>
+            <tr>
+              <th>性别 / 年龄</th>
+              <td>${renderCareRecordSheetField(info.gender)} / ${renderCareRecordSheetField(info.age)} 岁</td>
+              <th>床位号</th>
+              <td>${renderCareRecordSheetField(info.bed)}</td>
+            </tr>
+            <tr>
+              <th>护理等级</th>
+              <td colspan="3" class="care-record-sheet__choices">
+                ${renderCareRecordSheetOption(info.careType, "self-care", "自理")}
+                ${renderCareRecordSheetOption(info.careType, "semi-care", "半自理")}
+                ${renderCareRecordSheetOption(info.careType, "full-care", "全护理")}
+              </td>
+            </tr>
+            <tr>
+              <th>护理员</th>
+              <td>${renderCareRecordSheetField(info.caregiverName)}</td>
+              <th>审核人</th>
+              <td>${renderCareRecordSheetField(info.reviewerName)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="care-record-sheet__block">
+        <div class="care-record-sheet__section-title">二、月度护理记录</div>
+        <div class="care-record-sheet__monthly-scroll">
+          <table class="care-record-sheet__monthly-table">
+            <thead>
+              <tr>
+                <th class="monthly-group-col">项目</th>
+                <th class="monthly-item-col">内容</th>
+                ${days.map((day) => `<th class="monthly-day-col">${day}</th>`).join("")}
+              </tr>
+            </thead>
+            <tbody>
+              ${sections
+                .map((section) =>
+                  (section.items || [])
+                    .map(
+                      (item, itemIndex) => `
+                        <tr>
+                          ${
+                            itemIndex === 0
+                              ? `<th class="monthly-group-col" rowspan="${Math.max(1, (section.items || []).length)}">${section.title}</th>`
+                              : ""
+                          }
+                          <td class="monthly-item-col">
+                            ${item.label}
+                            ${item.timeWindow ? `<small>${item.timeWindow}</small>` : ""}
+                          </td>
+                          ${days
+                            .map((day) => {
+                              const report = dayReportsMap.get(day);
+                              return `<td class="monthly-day-col">${report && report.reportItems && report.reportItems[item.id] ? renderCareRecordSheetMark(true) : ""}</td>`;
+                            })
+                            .join("")}
+                        </tr>
+                      `,
+                    )
+                    .join(""),
+                )
+                .join("")}
+              <tr>
+                <th class="monthly-group-col">备注</th>
+                <td class="monthly-item-col">备注</td>
+                ${days.map(() => '<td class="monthly-day-col"></td>').join("")}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </article>
   `;
 }
 
@@ -2699,6 +3085,7 @@ export function renderDirectorCareRecordsPage({ state, selectors }) {
         selectors.directorReportTemplateScheduleSectionId,
         selectors.directorReportTemplateTransient,
         selectors.careLevelOptions,
+        Object.values(state.dailyReportTemplates || {}),
       )}
       ${renderReportTemplatePreviewOverlay(
         selectors.directorReportTemplateDraft,
@@ -3035,6 +3422,7 @@ export function renderDirectorCareRecordsPage({ state, selectors }) {
         selectors.directorReportTemplateScheduleSectionId,
         selectors.directorReportTemplateTransient,
         selectors.careLevelOptions,
+        selectors.dailyReportTemplateOptions,
       )}
       ${renderReportTemplatePreviewOverlay(
         selectors.directorReportTemplateDraft,
@@ -3046,14 +3434,8 @@ export function renderDirectorCareRecordsPage({ state, selectors }) {
 }
 
 export function renderDirectorHomePage({ state, selectors }) {
-  if (!state.cloud.tasksFetchedAt && !state.cloud.tasksError) {
-    return `<section class="director-page">
-      ${renderDirectorHeader("院长工作台", state.director.date)}
-      <div class="empty-state empty-state--soft"><span id="sync-status">${state.ui.syncPhase || "正在连接云端..."}</span></div>
-    </section>`;
-  }
-
   const { taskProgress, floors } = state.director;
+  const syncing = !!state.ui.syncPhase;
   const inventoryMeta = `${state.director.inventorySummary.warningCount} 项预警`;
   const anomalyMeta = `${selectors.directorExceptionReports?.length || 0} 条记录`;
   const issueFloorCount = floors.filter((floor) => floor.error > 0).length;
@@ -3074,6 +3456,7 @@ export function renderDirectorHomePage({ state, selectors }) {
   return `
     <section class="director-page">
       ${renderDirectorHeader("院长工作台", state.director.date)}
+      ${syncing ? `<div class="director-sync-banner"><span id="sync-status">${state.ui.syncPhase || "正在同步数据..."}</span></div>` : ""}
 
       <div class="director-stack">
         <article class="director-command-center">
@@ -3254,7 +3637,7 @@ export function renderDirectorCarePlansPage({ state, selectors }) {
         ${
           selectors.directorPlanDraft
             ? ""
-            : renderPlanTimelineSidebar(selectedPlan, selectedResident, isTimelineOpen)
+            : renderPlanTimelineSidebar(selectedPlan, selectedResident, isTimelineOpen, state.tasks, state)
         }
         ${
           selectors.directorPlanDraft
@@ -3532,6 +3915,14 @@ function renderPersonnelDraftDialog(draft, selectors, state) {
                   <span>标签</span>
                   <input name="tags" type="text" placeholder="用逗号分隔，如 高血压,用药提醒" value="${Array.isArray(current?.tags) ? current.tags.join(",") : ""}" />
                 </label>
+                <label class="director-field">
+                  <span>家属登录账号</span>
+                  <input name="username" type="text" placeholder="家属登录用户名" value="${current?.username || ""}" />
+                </label>
+                <label class="director-field">
+                  <span>家属登录密码</span>
+                  <input name="password" type="password" placeholder="${isEdit ? "留空则不修改" : "至少8位"}" value="" />
+                </label>
               `
               : `
                 <label class="director-field">
@@ -3561,6 +3952,14 @@ function renderPersonnelDraftDialog(draft, selectors, state) {
                   <select name="status" class="director-select">
                     ${renderSelectOptions(statusOptions, current?.status || "off-duty")}
                   </select>
+                </label>
+                <label class="director-field">
+                  <span>登录账号</span>
+                  <input name="username" type="text" placeholder="护工登录用户名" value="${current?.username || ""}" />
+                </label>
+                <label class="director-field">
+                  <span>登录密码</span>
+                  <input name="password" type="password" placeholder="${isEdit ? "留空则不修改" : "至少8位"}" value="" />
                 </label>
               `
           }
@@ -3628,16 +4027,33 @@ function renderPersonnelPlanDetailDialog(elderId, selectors, state) {
   `;
 }
 
-function renderPersonnelMenu(type, id) {
+function renderPersonnelMenu(type, id, selectors) {
   const isElder = type === "elder";
+  const templateOptions = isElder ? [...(selectors?.dailyReportTemplateOptions || [])] : [];
   return `
     <div class="director-people-menu" data-personnel-ignore>
+      <button type="button" data-action="open-personnel-edit" data-value="${type}:${id}">${isElder ? "基础信息" : "编辑"}</button>
+      ${
+        isElder && templateOptions.length
+          ? `
+            <button type="button" data-action="toggle-elder-template-menu">护理方案</button>
+            <div class="director-people-submenu">
+              ${templateOptions
+                .map(
+                  (t) => `
+                    <button type="button" data-action="set-elder-report-template" data-value="${id}" data-template="${t.value}">${t.label}</button>
+                  `,
+                )
+                .join("")}
+            </div>
+          `
+          : ""
+      }
       ${
         isElder
           ? `<button type="button" data-action="open-personnel-elder-detail" data-value="${id}">详情</button>`
           : ""
       }
-      <button type="button" data-action="open-personnel-edit" data-value="${type}:${id}">编辑</button>
       <button type="button" class="is-danger" data-action="${isElder ? "remove-elder" : "remove-caregiver"}" data-value="${id}">删除</button>
     </div>
   `;
@@ -3651,11 +4067,11 @@ function renderCaregiverPersonnelRow(caregiver, load) {
           ${renderAvatar(caregiver.name)}
           <span>
             <strong>${caregiver.name}</strong>
-            <small>${caregiver.role} · ${caregiver.employeeNo}</small>
+            <small>${caregiver.role} · ${caregiver.employeeNo}${caregiver.cloudUserId ? (caregiver.cloudUserStatus === "disabled" ? ' · <span style="color:#dc2626">账号已禁用</span>' : ' · <span style="color:#16a34a">账号正常</span>') : (caregiver.username ? ' · <span style="color:#d97706">账号未同步</span>' : '')}</small>
           </span>
         </div>
         <button type="button" class="director-people-row__more" data-action="toggle-personnel-menu" data-value="caregiver:${caregiver.id}" aria-label="更多操作">...</button>
-        ${renderPersonnelMenu("caregiver", caregiver.id)}
+        ${renderPersonnelMenu("caregiver", caregiver.id, null)}
       </div>
       <div class="director-people-row__details">
         <div class="director-people-row__meta">
@@ -3668,7 +4084,7 @@ function renderCaregiverPersonnelRow(caregiver, load) {
   `;
 }
 
-function renderElderPersonnelRow(elder, plan) {
+function renderElderPersonnelRow(elder, plan, selectors) {
   return `
     <article class="director-people-row director-people-row--collapsible" data-action="toggle-personnel-card" data-value="elder:${elder.id}">
       <div class="director-people-row__top">
@@ -3676,11 +4092,11 @@ function renderElderPersonnelRow(elder, plan) {
           ${renderAvatar(elder.name)}
           <span>
             <strong>${elder.name}</strong>
-            <small>${elder.room}室 · ${elder.level}</small>
+            <small>${elder.room}室 · ${elder.level}${elder.familyUserId ? (elder.familyUserStatus === "disabled" ? ' · <span style="color:#dc2626">账号已禁用</span>' : ' · <span style="color:#16a34a">账号正常</span>') : (elder.username ? ' · <span style="color:#d97706">账号未同步</span>' : '')}</small>
           </span>
         </div>
         <button type="button" class="director-people-row__more" data-action="toggle-personnel-menu" data-value="elder:${elder.id}" aria-label="更多操作">...</button>
-        ${renderPersonnelMenu("elder", elder.id)}
+        ${renderPersonnelMenu("elder", elder.id, selectors)}
       </div>
       <div class="director-people-row__details">
         <div class="director-people-row__meta">
@@ -3755,7 +4171,7 @@ function renderSelectedElderFloorList(elders, selectors, selectedFloor) {
       ${visibleElders
         .map((elder) => {
           const plan = selectors.elderPlanSummaries.find((item) => item.elder?.id === elder.id);
-          return renderElderPersonnelRow(elder, plan);
+          return renderElderPersonnelRow(elder, plan, selectors);
         })
         .join("")}
     </div>
@@ -3793,14 +4209,16 @@ function renderCaregiverAttendancePanel(attendance) {
 export function renderDirectorPeoplePage({ state, selectors }) {
   const activeType = selectors.directorPersonnelType === "elder" ? "elder" : "caregiver";
   const selectedPersonnelFloor = Math.min(5, Math.max(1, Number.parseInt(selectors.directorPersonnelFloor, 10) || 1));
-  const sortedCaregivers = [...state.caregivers].sort((left, right) => {
-    if (left.floor !== right.floor) return left.floor - right.floor;
-    return left.name.localeCompare(right.name);
-  });
-  const sortedElders = [...state.elders].sort((left, right) => {
-    if (left.floor !== right.floor) return left.floor - right.floor;
-    return left.room.localeCompare(right.room);
-  });
+  const sortedCaregivers = [...state.caregivers]
+    .sort((left, right) => {
+      if (left.floor !== right.floor) return left.floor - right.floor;
+      return left.name.localeCompare(right.name);
+    });
+  const sortedElders = [...state.elders]
+    .sort((left, right) => {
+      if (left.floor !== right.floor) return left.floor - right.floor;
+      return left.room.localeCompare(right.room);
+    });
 
   return `
     <section class="director-page director-page--people">
@@ -3813,7 +4231,7 @@ export function renderDirectorPeoplePage({ state, selectors }) {
               <strong>${activeType === "elder" ? "老人管理" : "护工管理"}</strong>
             </div>
             <div class="director-panel__actions">
-              ${renderStatusPill(activeType === "elder" ? `${state.elders.length}位` : `${state.caregivers.length}名`, activeType === "elder" ? "primary" : "success")}
+              ${renderStatusPill(activeType === "elder" ? `${sortedElders.length}位` : `${sortedCaregivers.length}名`, activeType === "elder" ? "primary" : "success")}
               <button type="button" class="button button--small button--primary" data-action="open-personnel-draft" data-value="${activeType}">
                 ${activeType === "elder" ? "新增老人" : "新增护工"}
               </button>
@@ -4076,7 +4494,7 @@ export function renderDirectorElderTimelinePage({ state, selectors }) {
               const tone = item.statusTone || item.tone || "muted";
               const statusLabel = item.statusLabel || (tone === "success" ? "已完成" : tone === "overdue" ? "超时" : "未完成");
               return `
-                <article class="director-timeline__item director-timeline__item--${tone}">
+                <article class="director-timeline__item director-timeline__item--${tone}" data-task-id="${item.id || ""}" data-task-tone="${tone}" data-task-status="${statusLabel}">
                   <div class="director-timeline__time">${item.time}</div>
                   <div class="director-timeline__line">
                     <span class="director-timeline__dot director-timeline__dot--${tone}"></span>
@@ -4097,4 +4515,3 @@ export function renderDirectorElderTimelinePage({ state, selectors }) {
     </section>
   `;
 }
-

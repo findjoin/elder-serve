@@ -14,6 +14,7 @@ import {
   renderDirectorPeoplePage,
   renderDirectorProfilePage,
   renderDirectorReadInboxPage,
+  renderDirectorTaskDetailDialog,
   renderSelectedPlan,
   renderDirectorStatisticsPage,
   renderDirectorTemplateLibraryPage,
@@ -216,6 +217,14 @@ function normalizeTaskEvidenceList(evidence) {
   if (!evidence) return [];
   const source = Array.isArray(evidence) ? evidence : [evidence];
   return source.map(normalizeTaskEvidence).filter((item) => item.name || item.dataUrl);
+}
+
+function renderDirectorTaskDetail() {
+  const taskId = state.ui.directorTaskDetailId;
+  if (state.session.identity !== "director" || !taskId) return "";
+  const task = state.tasks.find((t) => t.id === taskId);
+  if (!task) return "";
+  return renderDirectorTaskDetailDialog(task, state);
 }
 
 function renderTaskRecordDialog() {
@@ -1288,26 +1297,14 @@ async function renderElementToCanvas(element) {
       </foreignObject>
     </svg>
   `;
-  const svgBlob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-  const url = URL.createObjectURL(svgBlob);
-  const image = new Image();
-  const loaded = new Promise((resolve, reject) => {
-    image.onload = resolve;
-    image.onerror = reject;
-  });
-
-  image.src = url;
-  await loaded;
 
   const canvas = document.createElement("canvas");
   canvas.width = width * scale;
   canvas.height = height * scale;
-  const context = canvas.getContext("2d");
-  context.fillStyle = "#ffffff";
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.scale(scale, scale);
-  context.drawImage(image, 0, 0, width, height);
-  URL.revokeObjectURL(url);
+  canvas._svgFallback = svg;
+  canvas._svgWidth = width;
+  canvas._svgHeight = height;
+  canvas._svgScale = scale;
 
   return canvas;
 }
@@ -1330,6 +1327,38 @@ function buildDirectorExportFileName(record, extension) {
 async function exportDirectorCareRecordImage(preview, record) {
   try {
     const canvas = await renderElementToCanvas(preview);
+
+    if (canvas._svgFallback) {
+      const svgFileName = buildDirectorExportFileName(record, "svg");
+      const svgMarkup = canvas._svgFallback;
+      const svgBlob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
+      const svgUrl = URL.createObjectURL(svgBlob);
+
+      if (window.AndroidBridge && typeof window.AndroidBridge.saveBase64File === "function") {
+        try {
+          const reader = new FileReader();
+          const base64Promise = new Promise((resolve) => {
+            reader.onloadend = () => resolve(String(reader.result).split(",")[1] || "");
+          });
+          reader.readAsDataURL(svgBlob);
+          const base64 = await base64Promise;
+          window.AndroidBridge.saveBase64File(svgFileName, "image/svg+xml", base64);
+          actions.announce("图片已保存到下载目录");
+          return;
+        } catch (_) {}
+      }
+
+      const link = document.createElement("a");
+      link.download = svgFileName;
+      link.href = svgUrl;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(svgUrl), 60000);
+      actions.announce("监管归档表图片已开始导出");
+      return;
+    }
+
     const fileName = buildDirectorExportFileName(record, "png");
     const imageDataUrl = canvas.toDataURL("image/png");
 
@@ -1471,6 +1500,7 @@ function renderApp() {
         ${renderBottomNav()}
       </section>
       ${renderTaskRecordDialog()}
+      ${renderDirectorTaskDetail()}
       ${renderToast()}
     </main>
   `;
@@ -1501,7 +1531,7 @@ async function handleLoginSubmit(event) {
   state.ui.loginError = "";
   notify();
   try {
-    await actions.login("demo-qinghe-care", username, password);
+    await actions.login("", username, password);
   } catch (err) {
     state.ui.loginError = err.message || "登录失败，请检查账号密码";
     notify();
@@ -1510,7 +1540,15 @@ async function handleLoginSubmit(event) {
 
 function handleClick(event) {
   const trigger = event.target.closest("[data-action]");
-  if (!trigger) return;
+  if (!trigger) {
+    const tag = event.target.tagName;
+    if (tag !== "INPUT" && tag !== "TEXTAREA" && tag !== "SELECT" && tag !== "LABEL" && !event.target.closest("label")) {
+      if (document.activeElement && (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA")) {
+        document.activeElement.blur();
+      }
+    }
+    return;
+  }
 
   persistDirectorAssignmentDrafts();
 
@@ -1549,7 +1587,7 @@ function handleClick(event) {
     }
     state.ui.loginError = "";
     notify();
-    actions.login("demo-qinghe-care", username, password).catch((err) => {
+    actions.login("", username, password).catch((err) => {
       state.ui.loginError = err.message || "登录失败";
       notify();
     });
@@ -1649,8 +1687,40 @@ function handleClick(event) {
     app.querySelectorAll(".director-people-row.is-menu-open").forEach((item) => {
       if (item !== card) item.classList.remove("is-menu-open");
     });
+    const opening = !card.classList.contains("is-menu-open");
     card.classList.toggle("is-menu-open");
+    if (opening) {
+      const menu = card.querySelector(".director-people-menu");
+      if (menu) {
+        const btnRect = trigger.getBoundingClientRect();
+        menu.style.position = "fixed";
+        menu.style.right = (window.innerWidth - btnRect.right) + "px";
+        const estMenuHeight = 140;
+        if (btnRect.bottom + estMenuHeight > window.innerHeight) {
+          menu.style.top = "auto";
+          menu.style.bottom = (window.innerHeight - btnRect.top + 4) + "px";
+        } else {
+          menu.style.top = (btnRect.bottom + 4) + "px";
+          menu.style.bottom = "auto";
+        }
+      }
+    }
     return;
+  }
+  if (action === "toggle-elder-template-menu") {
+    const menu = trigger.closest(".director-people-menu");
+    if (menu) {
+      menu.querySelectorAll(".director-people-menu.is-template-open").forEach((item) => {
+        if (item !== menu) item.classList.remove("is-template-open");
+      });
+      menu.classList.toggle("is-template-open");
+    }
+    return;
+  }
+  if (action === "set-elder-report-template") {
+    const templateId = trigger.dataset.template;
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.setElderReportTemplate(value, templateId);
   }
   if (action === "set-director-personnel-type") {
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
@@ -1777,7 +1847,7 @@ function handleClick(event) {
     event.preventDefault();
     event.stopPropagation();
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
-    return actions.saveDailyReportTemplateDraft(collectDailyReportTemplateDraft());
+    return actions.closeDailyReportTemplateSchedule();
   }
   if (action === "add-report-template-item-from-schedule") {
     const label = window.prompt("请输入子标题名称", "");
@@ -1871,6 +1941,25 @@ function handleClick(event) {
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
     return actions.saveDailyReportTemplateDraft(collectDailyReportTemplateDraft());
   }
+  if (action === "edit-saved-report-template") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    const tpl = (state.dailyReportTemplates || {})[value];
+    if (tpl) return actions.openDailyReportTemplateEditor(tpl);
+    return;
+  }
+  if (action === "director-view-task-detail") {
+    var _dtid = el.dataset.value || value;
+    actions.loadTaskEvidence(_dtid).then(function () {
+      state.ui.directorTaskDetailId = _dtid;
+      notify();
+    });
+    return;
+  }
+  if (action === "close-director-task-detail") {
+    state.ui.directorTaskDetailId = "";
+    notify();
+    return;
+  }
   if (action === "set-director-template-filter") return actions.setDirectorTemplateFilter(value);
   if (action === "set-director-assignment-filter") return actions.setDirectorAssignmentFilter(value);
   if (action === "set-director-dispatch-filter") return actions.setDirectorDispatchFilter(value);
@@ -1947,6 +2036,12 @@ function handleClick(event) {
     return actions.selectDirectorPlanRoom(value);
   }
   if (action === "close-director-plan-timeline") return actions.closeDirectorPlanTimeline();
+  if (action === "reassign-elder-caregiver") {
+    const elderId = trigger.dataset.elderId;
+    const floor = Number(trigger.dataset.floor || 1);
+    if (elderId) actions.reassignElderCaregiver(elderId, floor);
+    return;
+  }
   if (action === "open-director-plan-note-draft") return actions.openDirectorPlanNoteDraft(value);
   if (action === "close-director-plan-note-draft") return actions.closeDirectorPlanNoteDraft();
   if (action === "save-director-plan-note-draft") {
@@ -2094,6 +2189,47 @@ document.addEventListener("pointerdown", handleReportTemplateSchedulePointerDown
 document.addEventListener("pointermove", handleReportTemplateSchedulePointerMove);
 document.addEventListener("pointerup", handleReportTemplateSchedulePointerUp);
 document.addEventListener("pointercancel", handleReportTemplateSchedulePointerUp);
+document.addEventListener("dragstart", (event) => {
+  const tag = event.target.closest("[draggable]");
+  if (!tag) return;
+  const elderId = tag.dataset.elderId;
+  const floor = tag.dataset.floor;
+  if (elderId && floor) {
+    event.dataTransfer.setData("text/plain", JSON.stringify({ elderId, floor }));
+    event.dataTransfer.effectAllowed = "move";
+    tag.style.opacity = "0.5";
+    const onEnd = () => { tag.style.opacity = ""; };
+    tag.addEventListener("dragend", onEnd, { once: true });
+  }
+});
+document.addEventListener("dragover", (event) => {
+  const dropZone = event.target.closest("[data-drop-caregiver-id]");
+  if (!dropZone) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+  dropZone.classList.add("is-drag-over");
+});
+document.addEventListener("dragleave", (event) => {
+  const dropZone = event.target.closest("[data-drop-caregiver-id]");
+  if (!dropZone) return;
+  if (!dropZone.contains(event.relatedTarget)) {
+    dropZone.classList.remove("is-drag-over");
+  }
+});
+document.addEventListener("drop", (event) => {
+  const dropZone = event.target.closest("[data-drop-caregiver-id]");
+  if (!dropZone) return;
+  event.preventDefault();
+  dropZone.classList.remove("is-drag-over");
+  try {
+    const raw = event.dataTransfer.getData("text/plain");
+    const { elderId } = JSON.parse(raw);
+    const caregiverId = dropZone.dataset.dropCaregiverId;
+    if (elderId && caregiverId) {
+      actions.reassignElderToCaregiver(elderId, caregiverId);
+    }
+  } catch (_) {}
+});
 window.addEventListener("popstate", (event) => {
   const snapshot = event.state?.appNav;
   if (!snapshot) return;
@@ -2149,7 +2285,7 @@ function syncDirectorCloudPolling() {
 
   if (directorCloudPollTimer) return;
 
-  if (!state._holdNotify) {
+  if (!state._holdNotify && !state._loadingDirectorData) {
     actions.refreshDirectorCloudReports({ silent: true });
     actions.refreshDirectorCloudTasks({ silent: true });
   }
@@ -2271,6 +2407,18 @@ registerServiceWorker();
       }
       renderApp();
       if (role === "caregiver") {
+        const roleEntityId = result.user.roleEntityId || "";
+        const instId = result.user.institutionId || "";
+        if (instId) await actions._loadCloudPersonnel(instId);
+        if (roleEntityId) {
+          const matched = state.caregivers.find(function(c) { return c.id === roleEntityId; });
+          if (matched) state.caregiver = { ...matched };
+        }
+        if (!state.caregiver?.id) {
+          const cgName = result.user.displayName || result.user.username || "";
+          const byName = state.caregivers.find(function(c) { return c.name === cgName; });
+          if (byName) state.caregiver = { ...byName };
+        }
         actions.refreshInstitutionSharedState({ silent: true });
       } else if (role === "director" || role === "admin" || role === "superadmin") {
         actions.loadDirectorInitialData();
