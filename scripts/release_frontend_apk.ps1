@@ -37,7 +37,8 @@ function Set-GradleProperty {
   if (-not $found) {
     $next += "$Key=$Value"
   }
-  Set-Content -LiteralPath $FilePath -Value $next -Encoding UTF8
+  $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+  [System.IO.File]::WriteAllLines($FilePath, $next, $utf8NoBom)
 }
 
 $versionCode = [int](Read-GradleProperty -FilePath $gradlePropsFile -Key "appVersionCode")
