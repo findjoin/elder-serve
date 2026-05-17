@@ -108,6 +108,11 @@ export async function requestJson(path, init = {}) {
       body: init.body,
       signal: controller.signal,
     });
+  } catch (error) {
+    if (error?.name === "AbortError" || /aborted/i.test(String(error?.message || ""))) {
+      throw new Error("云端请求超时，请稍后重试");
+    }
+    throw error;
   } finally {
     clearTimeout(timeoutId);
   }

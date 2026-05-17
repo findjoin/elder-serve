@@ -52,6 +52,8 @@ const DEFAULT_REPORT_TEMPLATE_IMPORT_INSTITUTIONS = [
   { id: "zhuzhou-demo", name: "株洲示范养老院" },
 ];
 
+let directorCareReportsRequestInFlight = false;
+
 export function notify() {
   if (state._holdNotify) return;
   listeners.forEach((listener) => listener(state));
@@ -4172,6 +4174,7 @@ export const actions = {
   },
   async refreshDirectorCloudReports(options = {}) {
     if (options.silent && isReportTemplateWorkspaceOpen()) return;
+    if (directorCareReportsRequestInFlight) return;
 
     if (!isCloudSyncConfigured()) {
       if (!options.silent) {
@@ -4188,6 +4191,7 @@ export const actions = {
     if (!options.silent) notify();
 
     const prevSnapshot = JSON.stringify(state.cloud.careReports);
+    directorCareReportsRequestInFlight = true;
     try {
       await downloadDirectorCareReports(
         {
@@ -4201,6 +4205,7 @@ export const actions = {
     } catch (error) {
       setCloudCareReportsError(error?.message || "拉取云端交班日报失败");
     } finally {
+      directorCareReportsRequestInFlight = false;
       setCloudCareReportsLoading(false);
       if (JSON.stringify(state.cloud.careReports) !== prevSnapshot) notify();
     }
