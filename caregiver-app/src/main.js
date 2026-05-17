@@ -39,12 +39,16 @@ let pendingAnchorRestore = null;
 let isRestoringBrowserHistory = false;
 let lastHistorySignature = "";
 let directorCloudPollTimer = 0;
+let directorCareReportsPollTimer = 0;
 let caregiverTaskPollTimer = 0;
 let institutionStatePollTimer = 0;
 let liveClockTimer = 0;
 let reportTemplateScheduleDrag = null;
 let skipCaregiverTimelineAutoFocus = false;
 let lastCaregiverTimelineFocusKey = "";
+
+const DIRECTOR_TASK_POLL_INTERVAL_MS = 10000;
+const DIRECTOR_CARE_REPORT_POLL_INTERVAL_MS = 60000;
 
 const REPORT_TEMPLATE_SCHEDULE_START_MINUTES = 0;
 const REPORT_TEMPLATE_SCHEDULE_END_MINUTES = 24 * 60;
@@ -2279,20 +2283,30 @@ function syncDirectorCloudPolling() {
 
   if (!shouldPoll) {
     window.clearInterval(directorCloudPollTimer);
+    window.clearInterval(directorCareReportsPollTimer);
     directorCloudPollTimer = 0;
+    directorCareReportsPollTimer = 0;
     return;
   }
 
-  if (directorCloudPollTimer) return;
-
   if (!state._holdNotify && !state._loadingDirectorData) {
-    actions.refreshDirectorCloudReports({ silent: true });
     actions.refreshDirectorCloudTasks({ silent: true });
+    if (state.ui.route === "director-care-records") {
+      actions.refreshDirectorCloudReports({ silent: true });
+    }
   }
-  directorCloudPollTimer = window.setInterval(() => {
-    actions.refreshDirectorCloudReports({ silent: true });
-    actions.refreshDirectorCloudTasks({ silent: true });
-  }, 10000);
+
+  if (!directorCloudPollTimer) {
+    directorCloudPollTimer = window.setInterval(() => {
+      actions.refreshDirectorCloudTasks({ silent: true });
+    }, DIRECTOR_TASK_POLL_INTERVAL_MS);
+  }
+
+  if (!directorCareReportsPollTimer) {
+    directorCareReportsPollTimer = window.setInterval(() => {
+      actions.refreshDirectorCloudReports({ silent: true });
+    }, DIRECTOR_CARE_REPORT_POLL_INTERVAL_MS);
+  }
 }
 
 function syncCaregiverTaskPolling() {

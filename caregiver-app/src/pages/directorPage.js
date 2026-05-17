@@ -414,7 +414,7 @@ function renderDirectorInboxCalendar(state, selectors) {
   const previousMonth = shiftCalendarMonth(state.ui.directorAuditDate, state.director.date, -1);
   const nextMonth = shiftCalendarMonth(state.ui.directorAuditDate, state.director.date, 1);
   const fetchedAt = selectors.cloudStatus?.fetchedAt || "";
-  const fetchedAtLabel = fetchedAt ? `上次刷新 ${fetchedAt.slice(11, 16)}` : "尚未刷新";
+  const fetchedAtLabel = fetchedAt ? `上次刷新 ${fetchedAt.slice(11, 16)} · 自动60秒` : "尚未刷新 · 自动60秒";
   const calendarCells = [
     ...Array.from({ length: leadingBlankCount }, (_, index) => `<span class="director-inbox-day director-inbox-day--blank" aria-hidden="true" data-blank="${index}"></span>`),
     ...Array.from({ length: daysInMonth }, (_, index) => {
