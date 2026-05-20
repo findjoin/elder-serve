@@ -14,7 +14,7 @@ export function renderTaskCenterPage({ selectors }) {
   return `
     <section class="sticky-section">
       <div class="page-header page-header--compact">
-        <h1>任务中心</h1>
+        <h1>我的任务</h1>
         <p>优先处理院长发布和需拍照任务</p>
       </div>
     </section>

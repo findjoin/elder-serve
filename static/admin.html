@@ -133,6 +133,56 @@ td.actions{display:flex;gap:2px;flex-wrap:wrap}
 .storage-bar-fill.ok{background:var(--success)}
 .storage-bar-fill.warn{background:var(--warning)}
 .storage-bar-fill.full{background:var(--danger)}
+.raw-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:16px 20px;border-bottom:1px solid var(--border)}
+.raw-toolbar select,.raw-toolbar input{padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:var(--surface)}
+  .raw-toolbar input{width:180px}
+  .raw-meta{font-size:12px;color:var(--text-secondary);padding:0 20px 12px}
+  .realtime-bar{display:flex;align-items:center;gap:10px;justify-content:flex-end;margin:-10px 0 16px;font-size:12px;color:var(--text-secondary)}
+  .realtime-pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--surface);border-radius:999px;padding:5px 10px;box-shadow:var(--shadow)}
+  .realtime-dot{width:7px;height:7px;border-radius:999px;background:var(--success);box-shadow:0 0 0 3px var(--success-light)}
+  .realtime-pill.paused .realtime-dot{background:var(--warning);box-shadow:0 0 0 3px var(--warning-light)}
+  .realtime-pill.error .realtime-dot{background:var(--danger);box-shadow:0 0 0 3px var(--danger-light)}
+  .realtime-bar button{padding:5px 10px}
+  .raw-cell{max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.raw-json{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:16px;overflow:auto;max-height:60vh;font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-all}
+.template-detail-table{width:100%;border-collapse:collapse;font-size:13px}
+.template-detail-table th,.template-detail-table td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+.template-detail-table th{background:#f8fafc;color:var(--text-secondary);font-size:11px}
+.template-summary{display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--text-secondary)}
+.template-summary span{background:#f1f5f9;border:1px solid var(--border);border-radius:999px;padding:2px 8px}
+.template-tree-name{display:flex;align-items:flex-start;gap:8px}
+.template-tree-name__icon{width:22px;height:22px;border-radius:999px;background:#e0f2fe;color:#0369a1;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0}
+.template-tree-name__icon.child{background:#fef3c7;color:#92400e}
+.template-tree-name__body strong{display:block}
+.template-tree-name__body code{font-size:11px;color:var(--text-secondary)}
+.template-tree-row--child td{background:#fffdf7}
+.template-tree-indent{display:inline-block;width:18px;border-left:2px solid #f3d19e;border-bottom:2px solid #f3d19e;height:16px;margin-right:8px;border-bottom-left-radius:6px;vertical-align:middle}
+.template-parent-label{display:flex;flex-direction:column;gap:2px;font-size:12px}
+.template-parent-label strong{color:var(--text)}
+.template-parent-label code{font-size:11px;color:var(--text-secondary)}
+.template-parent-label span{color:var(--text-secondary)}
+.task-record-note{max-width:260px;white-space:normal;line-height:1.45;color:var(--text-primary)}
+.task-record-photo-list{display:flex;gap:6px;flex-wrap:wrap}
+.task-record-photo{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:6px;padding:3px 6px;background:#f8fafc;font-size:12px;color:var(--text-secondary);text-decoration:none}
+.task-record-photo img{width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid var(--border)}
+.task-record-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+.task-record-photo-card{border:1px solid var(--border);border-radius:8px;padding:8px;background:#f8fafc;cursor:pointer;transition:box-shadow .15s,transform .15s}
+.task-record-photo-card:hover{box-shadow:0 8px 18px rgb(15 23 42/0.14);transform:translateY(-1px)}
+.task-record-photo-card img{width:100%;max-height:220px;object-fit:contain;border-radius:6px;background:#fff}
+.task-record-photo-card a{word-break:break-all;font-size:12px}
+.task-record-large{display:flex;flex-direction:column;gap:12px}
+.task-record-large img{max-width:100%;max-height:70vh;object-fit:contain;border-radius:8px;background:#0f172a}
+.task-record-large__bar{display:flex;gap:8px;align-items:center;justify-content:space-between}
+.task-record-status{display:inline-block;border-radius:999px;padding:2px 8px;font-size:12px;border:1px solid var(--border);background:#f8fafc}
+.task-record-status.completed{background:#ecfdf5;color:#047857;border-color:#a7f3d0}
+.task-record-status.pending{background:#fffbeb;color:#92400e;border-color:#fde68a}
+.task-record-status.risk,.task-record-status.refused{background:#fef2f2;color:#b91c1c;border-color:#fecaca}
+.elder-profile-cell{display:flex;flex-direction:column;gap:2px}
+.elder-profile-cell strong{font-size:13px}
+.elder-profile-cell code{font-size:11px;color:var(--text-secondary)}
+.elder-template-pill{display:inline-flex;align-items:center;border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:999px;padding:2px 8px;font-size:12px;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.elder-task-entry{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--border);font-size:12px;color:var(--text-secondary)}
 </style>
 </head>
 <body>
@@ -163,10 +213,10 @@ td.actions{display:flex;gap:2px;flex-wrap:wrap}
       <li data-tab="users">&#128101; 用户管理</li>
       <li data-tab="sessions">&#128172; 在线会话</li>
       <li data-tab="appReleases">&#128230; APP版本</li>
+      <li data-tab="rawData">&#128451; 数据库总览</li>
       <div class="nav-divider">运营数据</div>
       <li data-tab="elders">&#128116; 老人档案</li>
       <li data-tab="templates">&#128203; 日报模板</li>
-      <li data-tab="careRecords">&#128221; 护理记录</li>
       <li data-tab="tasks">&#128204; 发布任务</li>
     </ul>
     <div class="sidebar-footer">
@@ -181,6 +231,11 @@ td.actions{display:flex;gap:2px;flex-wrap:wrap}
       <div class="stat-card"><div class="stat-icon green">&#128101;</div><div class="stat-info"><span>用户数</span><strong id="statUsers">-</strong></div></div>
       <div class="stat-card"><div class="stat-icon purple">&#128116;</div><div class="stat-info"><span>老人数</span><strong id="statElders">-</strong></div></div>
       <div class="stat-card"><div class="stat-icon amber">&#128190;</div><div class="stat-info"><span>存储用量</span><strong id="statStorage">-</strong></div></div>
+    </div>
+    <div class="realtime-bar">
+      <span class="realtime-pill" id="realtimeStatus"><span class="realtime-dot"></span><span id="realtimeText">实时刷新：开启，30 秒一次</span></span>
+      <button class="btn btn-secondary btn-sm" id="btnRealtimeToggle" type="button">暂停实时刷新</button>
+      <button class="btn btn-secondary btn-sm" id="btnRealtimeNow" type="button">立即刷新</button>
     </div>
 
     <!-- Institutions Tab -->
@@ -207,12 +262,6 @@ td.actions{display:flex;gap:2px;flex-wrap:wrap}
       <div class="table-wrap"><table id="templatesTable"><thead><tr><th>标题</th><th>机构</th><th>版本</th><th>来源</th><th>更新者</th><th>更新时间</th></tr></thead><tbody></tbody></table></div>
     </div>
 
-    <!-- Care Records Tab -->
-    <div id="tabCareRecords" class="card" style="display:none">
-      <div class="tab-header" style="padding:16px 20px"><h2>护理记录</h2><select id="crInstitutionSelect"><option value="">-- 全部机构 --</option></select><input type="text" id="crElderSearch" placeholder="搜索老人姓名..." style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:14px;width:160px"/></div>
-      <div class="table-wrap"><table id="careRecordsTable"><thead><tr><th>老人</th><th>房间</th><th>护工</th><th>日期</th><th>护理类型</th><th>状态</th><th>机构</th></tr></thead><tbody></tbody></table></div>
-    </div>
-
     <!-- Hierarchy Tab -->
     <div id="tabHierarchy" class="card" style="display:none">
       <div class="tab-header" style="padding:16px 20px"><h2>机构层级视图</h2><button class="btn btn-secondary btn-sm" id="btnRefreshHierarchy">刷新</button></div>
@@ -235,6 +284,22 @@ td.actions{display:flex;gap:2px;flex-wrap:wrap}
     <div id="tabAppReleases" class="card" style="display:none">
       <div class="tab-header" style="padding:16px 20px"><h2>APP 发布记录</h2></div>
       <div class="table-wrap"><table id="appReleasesTable"><thead><tr><th>版本</th><th>平台</th><th>渠道</th><th>大小</th><th>SHA256</th><th>强制更新</th><th>发布时间</th><th>备注</th></tr></thead><tbody></tbody></table></div>
+    </div>
+
+    <!-- Raw Data Tab -->
+    <div id="tabRawData" class="card" style="display:none">
+      <div class="tab-header" style="padding:16px 20px 0"><h2>数据库总览</h2></div>
+      <div class="raw-toolbar">
+        <select id="rawTableSelect"><option value="">-- 选择数据表 --</option></select>
+        <select id="rawInstitutionSelect"><option value="">全部机构</option></select>
+        <input type="date" id="rawRecordDate" title="按日期筛选任务记录"/>
+        <input type="text" id="rawSearch" placeholder="搜索 ID/姓名/状态..."/>
+        <select id="rawLimitSelect"><option value="50">50 条</option><option value="100" selected>100 条</option><option value="200">200 条</option><option value="300">300 条</option></select>
+        <button class="btn btn-secondary btn-sm" id="btnRefreshRawData">刷新</button>
+      </div>
+      <div class="raw-meta" id="rawDataMeta">只读浏览云端事实表；密码哈希、会话 token 已脱敏。</div>
+      <div class="table-wrap"><table id="rawDataTable"><thead><tr><th>数据</th></tr></thead><tbody></tbody></table></div>
+      <div class="pager"><button class="btn btn-secondary btn-sm" id="rawPrevPage">上一页</button><span id="rawPageInfo">-</span><button class="btn btn-secondary btn-sm" id="rawNextPage">下一页</button></div>
     </div>
   </div>
 </div>
@@ -313,6 +378,18 @@ td.actions{display:flex;gap:2px;flex-wrap:wrap}
   </div>
 </div>
 
+<!-- Raw Row Detail -->
+<div class="modal-overlay" id="modalRawDetail">
+  <div class="modal" style="width:820px">
+    <div class="modal-header"><h3 id="rawDetailTitle">数据详情</h3><button class="modal-close" data-close="modalRawDetail">&times;</button></div>
+    <div class="modal-body">
+      <pre id="rawDetailContent" class="raw-json"></pre>
+      <div id="rawDetailTableContent" style="display:none"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" data-close="modalRawDetail">关闭</button></div>
+  </div>
+</div>
+
 <div id="toastContainer"></div>
 
 <script>
@@ -325,7 +402,23 @@ var S = {
   selectedInstId: null,
   quotaInstId: null,
   resetUserId: null,
-  resetUserInstId: null
+  resetUserInstId: null,
+  rawTables: [],
+  rawTable: "",
+  rawInstitutionId: "",
+  rawOffset: 0,
+  rawLoadSeq: 0,
+  rawRows: [],
+  rawTaskGroups: [],
+  rawElderRows: [],
+  rawEvidenceDetailHtml: "",
+  rawTotal: 0,
+  realtimeEnabled: true,
+  realtimeIntervalMs: 30000,
+  realtimeTimer: null,
+  realtimeInFlight: false,
+  realtimeLastAt: "",
+  realtimeLastError: ""
 };
 
 /* ====== API ====== */
@@ -348,6 +441,7 @@ async function api(method, path, body) {
 function clearAuth() {
   S.token = null; S.user = null;
   localStorage.removeItem("elderAdminToken");
+  if (S.realtimeTimer) { clearInterval(S.realtimeTimer); S.realtimeTimer = null; }
 }
 function showLogin() {
   document.getElementById("loginScreen").style.display = "flex";
@@ -358,6 +452,7 @@ function showDashboard() {
   document.getElementById("mainLayout").style.display = "flex";
   document.getElementById("sidebarUsername").textContent = S.user ? S.user.username : "";
   document.getElementById("sidebarRole").textContent = S.user && S.user.role === "superadmin" ? "超级管理员" : "管理员";
+  startRealtimeRefresh();
 }
 async function verifyToken() {
   try {
@@ -402,6 +497,12 @@ function statusBadge(status) {
   if (status === "disabled") return '<span class="badge badge-disabled">已禁用</span>';
   return '<span class="badge">' + escHtml(status) + '</span>';
 }
+function attendanceStatusBadge(status, lateMinutes) {
+  if (status === "present") return '<span class="badge badge-active">正常</span>';
+  if (status === "late") return '<span class="badge badge-suspended">迟到' + (lateMinutes ? " " + escHtml(lateMinutes) + "分钟" : "") + '</span>';
+  if (status === "absent" || status === "missing") return '<span class="badge badge-disabled">缺勤</span>';
+  return '<span class="badge badge-default">缺勤</span>';
+}
 function storageBar(used, quota) {
   if (!quota || quota === 0) return formatBytes(used) + " / 无限制";
   var pct = Math.min(100, Math.round(used / quota * 100));
@@ -418,6 +519,60 @@ function toast(msg, type) {
 }
 function showModal(id) { document.getElementById(id).classList.add("open"); }
 function hideModal(id) { document.getElementById(id).classList.remove("open"); }
+function isAnyModalOpen() { return Boolean(document.querySelector(".modal-overlay.open")); }
+function formatClock(date) {
+  return String(date.getHours()).padStart(2, "0") + ":" + String(date.getMinutes()).padStart(2, "0") + ":" + String(date.getSeconds()).padStart(2, "0");
+}
+function renderRealtimeStatus(reason) {
+  var pill = document.getElementById("realtimeStatus");
+  var text = document.getElementById("realtimeText");
+  var btn = document.getElementById("btnRealtimeToggle");
+  if (!pill || !text || !btn) return;
+  pill.classList.remove("paused", "error");
+  if (S.realtimeLastError) {
+    pill.classList.add("error");
+    text.textContent = "实时刷新失败：" + S.realtimeLastError;
+  } else if (!S.realtimeEnabled) {
+    pill.classList.add("paused");
+    text.textContent = "实时刷新：已暂停";
+  } else if (reason) {
+    pill.classList.add("paused");
+    text.textContent = "实时刷新：暂停中（" + reason + "）";
+  } else {
+    text.textContent = "实时刷新：开启，30 秒一次" + (S.realtimeLastAt ? "；上次 " + S.realtimeLastAt : "");
+  }
+  btn.textContent = S.realtimeEnabled ? "暂停实时刷新" : "开启实时刷新";
+}
+async function refreshCurrentView(options) {
+  options = options || {};
+  var cfg = tabConfig[S.currentTab];
+  if (!cfg || !cfg.load) return;
+  if (options.realtime) {
+    if (!S.token || !S.realtimeEnabled) return;
+    if (document.hidden) { renderRealtimeStatus("页面在后台"); return; }
+    if (isAnyModalOpen()) { renderRealtimeStatus("弹窗打开"); return; }
+    if (S.realtimeInFlight) return;
+    S.realtimeInFlight = true;
+  }
+  try {
+    var stats = await api("GET", "/api/admin/stats");
+    renderStats(stats);
+    await cfg.load();
+    S.realtimeLastAt = formatClock(new Date());
+    S.realtimeLastError = "";
+  } catch(e) {
+    S.realtimeLastError = e.message || "刷新失败";
+    if (!options.realtime) toast(S.realtimeLastError, "error");
+  } finally {
+    if (options.realtime) S.realtimeInFlight = false;
+    renderRealtimeStatus();
+  }
+}
+function startRealtimeRefresh() {
+  if (S.realtimeTimer) clearInterval(S.realtimeTimer);
+  S.realtimeTimer = setInterval(function(){ refreshCurrentView({ realtime: true }); }, S.realtimeIntervalMs);
+  renderRealtimeStatus();
+}
 function showInlineErr(id, msg) {
   var el = document.getElementById(id);
   el.textContent = msg;
@@ -503,22 +658,6 @@ function renderTemplatesTable(list) {
   }).join("");
 }
 
-function renderCareRecordsTable(list) {
-  var tbody = document.querySelector("#careRecordsTable tbody");
-  if (!list || !list.length) { tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state">暂无护理记录</div></td></tr>'; return; }
-  tbody.innerHTML = list.map(function(r){
-    return '<tr>' +
-      '<td>' + escHtml(r.elderName || "-") + '</td>' +
-      '<td>' + escHtml(r.room || "-") + '</td>' +
-      '<td>' + escHtml(r.caregiverName || "-") + '</td>' +
-      '<td>' + formatDate(r.recordDate) + '</td>' +
-      '<td>' + escHtml(r.careType || "-") + '</td>' +
-      '<td>' + statusBadge(r.workflowStatus) + '</td>' +
-      '<td><code>' + escHtml(r.institutionId || "-") + '</code></td>' +
-      '</tr>';
-  }).join("");
-}
-
 function renderTasksTable(list) {
   var tbody = document.querySelector("#tasksTable tbody");
   if (!list || !list.length) { tbody.innerHTML = '<tr><td colspan="8"><div class="empty-state">暂无任务数据</div></td></tr>'; return; }
@@ -579,6 +718,921 @@ function renderAppReleasesTable(list) {
   }).join("");
 }
 
+function formatRawValue(value) {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+var RAW_TABLE_LABELS = {
+  institutions: "养老院机构",
+  users: "登录账号",
+  caregivers: "护工档案",
+  attendance_records: "护工考勤表",
+  elders: "老人档案",
+  caregiver_task_records: "护工任务记录",
+  published_tasks: "任务记录",
+  daily_report_templates: "日报模板",
+  anomalies: "异常事件",
+  vitals: "体征记录",
+  app_releases: "APP 发布版本",
+  sessions: "登录会话",
+  admins: "超级管理员",
+  ai_analysis_logs: "AI 分析日志"
+};
+
+function rawTableLabel(name) {
+  return RAW_TABLE_LABELS[name] || name;
+}
+
+function getReportTemplatePayload(row) {
+  return row && typeof row.template === "object" && row.template ? row.template : {};
+}
+
+function countReportTemplateItems(template) {
+  return (template.sections || []).reduce(function(total, section){
+    return total + ((section.items || []).length);
+  }, 0);
+}
+
+function classifyReportTemplate(row) {
+  var template = getReportTemplatePayload(row);
+  if (template.templateType === "base" || template.kind === "base") return "基础模板";
+  return "实例模板";
+}
+
+function getReportTemplateType(row) {
+  var template = getReportTemplatePayload(row);
+  return (template.templateType || template.kind || "instance") === "base" ? "base" : "instance";
+}
+
+function getReportTemplateBaseId(row) {
+  var template = getReportTemplatePayload(row);
+  return template.baseTemplateId || row.base_template_id || "";
+}
+
+function sortReportTemplatesAsTree(rows) {
+  var baseRows = [];
+  var instanceRows = [];
+  (rows || []).forEach(function(row){
+    if (getReportTemplateType(row) === "base") baseRows.push(row);
+    else instanceRows.push(row);
+  });
+  var byBaseId = {};
+  instanceRows.forEach(function(row){
+    var baseId = getReportTemplateBaseId(row) || "__no_base__";
+    if (!byBaseId[baseId]) byBaseId[baseId] = [];
+    byBaseId[baseId].push(row);
+  });
+  var result = [];
+  baseRows.forEach(function(base){
+    result.push(base);
+    (byBaseId[base.id] || []).forEach(function(child){ result.push(child); });
+    delete byBaseId[base.id];
+  });
+  Object.keys(byBaseId).forEach(function(baseId){
+    byBaseId[baseId].forEach(function(child){ result.push(child); });
+  });
+  return result;
+}
+
+function getTaskPayload(row) {
+  var payload = row ? (row.raw_payload || row.rawPayload) : null;
+  if (payload && typeof payload === "object") return payload;
+  if (typeof payload === "string" && payload.trim()) {
+    try { return JSON.parse(payload); } catch(e) { return {}; }
+  }
+  return {};
+}
+
+function taskStatusLabel(status) {
+  var map = { pending: "待完成", completed: "已完成", risk: "异常", refused: "已拒绝", skipped: "已跳过" };
+  return map[status] || status || "未知";
+}
+
+function taskSourceLabel(row) {
+  var source = row.source || "";
+  var group = row.template_group || "";
+  if (source === "temporary") return "临时分配";
+  if (source === "report-template" || group === "daily-report") return "日报模板";
+  if (source === "plan" || row.plan_id) return "护理方案";
+  return source || group || "日常任务";
+}
+
+function taskTimeLabel(row) {
+  var start = row.scheduled_start || row.start_time || "";
+  var end = row.scheduled_end || row.end_time || "";
+  var windowText = row.time_window || getTaskPayload(row).timeWindow || "";
+  if (start || end) return (start || "-") + " - " + (end || "-");
+  return windowText || "-";
+}
+
+function hasRealException(row) {
+  return row.status === "risk" || row.status === "refused";
+}
+
+function extractTaskRecordNote(row) {
+  var payload = getTaskPayload(row);
+  if (payload.recordNote) return payload.recordNote;
+  if (hasRealException(row) && payload.exceptionNote) return "异常：" + payload.exceptionNote;
+  return "";
+}
+
+function normalizeTaskEvidence(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.filter(Boolean);
+  if (typeof value === "string") return value ? [value] : [];
+  if (typeof value === "object") return [value];
+  return [];
+}
+
+function taskPhotoUrl(item) {
+  if (!item) return "";
+  if (typeof item === "string") return item;
+  return item.url || item.src || item.path || item.fileUrl || item.imageUrl || item.dataUrl || "";
+}
+
+function extractTaskPhotos(row) {
+  var payload = getTaskPayload(row);
+  var photos = normalizeTaskEvidence(payload.recordEvidence);
+  if (hasRealException(row)) photos = photos.concat(normalizeTaskEvidence(payload.exceptionEvidence));
+  return photos;
+}
+
+function renderTaskPhotoList(photos) {
+  if (!photos.length) return "-";
+  return '<span class="task-record-photo">有图片 ' + photos.length + ' 张</span>';
+}
+
+function renderTaskPhotoButton(row) {
+  var photos = extractTaskPhotos(row);
+  if (!photos.length) return "-";
+  return '<button class="btn-ghost" data-action="raw-task-evidence" data-task-id="' + escHtml(row.id || row.task_id || "") + '">图片 ' + photos.length + '</button>';
+}
+
+function renderEvidenceImage(item, index, labelPrefix) {
+  var url = item.dataUrl || item.url || taskPhotoUrl(item);
+  var label = labelPrefix + " " + (index + 1);
+  if (!url) return '<div class="task-record-photo-card"><strong>' + escHtml(label) + '</strong><div>图片数据不可用</div></div>';
+  var isImage = url.indexOf("data:image/") === 0 || /\.(png|jpe?g|gif|webp)$/i.test(url);
+  return '<div class="task-record-photo-card" data-action="raw-evidence-preview" data-url="' + escHtml(url) + '" data-title="' + escHtml(item.name || label) + '">' +
+    '<strong>' + escHtml(item.name || label) + '</strong>' +
+    (isImage ? '<img src="' + escHtml(url) + '" alt="' + escHtml(label) + '"/>' : '<a href="' + escHtml(url) + '" target="_blank" rel="noreferrer">打开图片链接</a>') +
+    (item.createdAt ? '<div class="muted">' + escHtml(item.createdAt) + '</div>' : '') +
+  '</div>';
+}
+
+function renderLargeEvidenceImage(url, title) {
+  var isImage = url.indexOf("data:image/") === 0 || /\.(png|jpe?g|gif|webp)$/i.test(url);
+  return '<div class="task-record-large">' +
+    '<div class="task-record-large__bar"><button class="btn btn-secondary btn-sm" data-action="raw-evidence-back">返回图片列表</button><strong>' + escHtml(title || "图片预览") + '</strong></div>' +
+    (isImage ? '<img src="' + escHtml(url) + '" alt="' + escHtml(title || "图片预览") + '"/>' : '<a href="' + escHtml(url) + '" target="_blank" rel="noreferrer">打开图片链接</a>') +
+  '</div>';
+}
+
+function renderTaskEvidenceDetail(data) {
+  var record = data.recordEvidence || [];
+  var exception = data.exceptionEvidence || [];
+  if (!record.length && !exception.length) return '<div class="empty-state">这条任务没有图片记录</div>';
+  return '<div style="margin-bottom:12px" class="template-summary">' +
+      '<span>任务：' + escHtml(data.title || data.id || "-") + '</span>' +
+      '<span>老人：' + escHtml(data.elderName || "-") + '</span>' +
+      '<span>护工：' + escHtml(data.caregiverName || "-") + '</span>' +
+      '<span>图片 ' + escHtml(data.total || (record.length + exception.length)) + ' 张</span>' +
+    '</div>' +
+    (record.length ? '<h4 style="margin:10px 0">文字/打卡图片</h4><div class="task-record-photo-grid">' + record.map(function(item, i){ return renderEvidenceImage(item, i, "记录图片"); }).join("") + '</div>' : '') +
+    (exception.length ? '<h4 style="margin:14px 0 10px">异常图片</h4><div class="task-record-photo-grid">' + exception.map(function(item, i){ return renderEvidenceImage(item, i, "异常图片"); }).join("") + '</div>' : '');
+}
+
+function renderTaskDetailTable(row) {
+  var payload = getTaskPayload(row);
+  var photos = extractTaskPhotos(row);
+  var note = extractTaskRecordNote(row);
+  var exceptionNote = hasRealException(row) ? (payload.exceptionNote || "-") : "-";
+  var rows = [
+    ["任务 ID", row.id || "-"],
+    ["机构", row.institution_id || "-"],
+    ["日期", row.record_date || "-"],
+    ["时间", taskTimeLabel(row)],
+    ["任务", row.title || row.template_item_label || "-"],
+    ["老人", (row.elder_name || "-") + (row.elder_room ? " / " + row.elder_room : "")],
+    ["负责护工", row.caregiver_name || row.default_caregiver_name || "未分配"],
+    ["状态", taskStatusLabel(row.status)],
+    ["来源", taskSourceLabel(row)],
+    ["完成时间", row.completed_at || payload.completedAt || "-"],
+    ["文字记录", note || "-"],
+    ["异常类型", hasRealException(row) ? (payload.exceptionType || row.status || "-") : "-"],
+    ["异常说明", exceptionNote],
+    ["异常上报时间", hasRealException(row) ? (payload.exceptionReportedAt || "-") : "-"],
+    ["图片记录", "__PHOTOS__"]
+  ];
+  return '<table class="template-detail-table"><tbody>' + rows.map(function(item){
+    return '<tr><th style="width:130px">' + escHtml(item[0]) + '</th><td>' + (item[1] === "__PHOTOS__" ? renderTaskPhotoList(photos) : escHtml(item[1])) + '</td></tr>';
+  }).join("") + '</tbody></table>';
+}
+
+function taskCaregiverName(row) {
+  return row.caregiver_name || row.default_caregiver_name || "未分配";
+}
+
+function taskCaregiverId(row) {
+  return row.caregiver_id || row.default_caregiver_id || "unassigned";
+}
+
+function taskElderName(row) {
+  return row.elder_name || "未知老人";
+}
+
+function taskElderId(row) {
+  return row.elder_id || "unknown-elder";
+}
+
+function taskOperatorName(row) {
+  var payload = getTaskPayload(row);
+  return payload.operatorName || payload.completedByName || payload.recordedByName || row.caregiver_name || row.default_caregiver_name || "未分配";
+}
+
+function buildTaskRecordGroups(rows) {
+  var groups = {};
+  rows.forEach(function(row){
+    var date = row.record_date || "-";
+    var elderId = taskElderId(row);
+    var key = date + "::" + elderId + "::" + taskElderName(row);
+    if (!groups[key]) {
+      groups[key] = {
+        key: key,
+        date: date,
+        elderId: elderId,
+        elderName: taskElderName(row),
+        elderRoom: row.elder_room || "",
+        rows: [],
+        caregivers: {},
+        completed: 0,
+        pending: 0,
+        abnormal: 0,
+        notes: 0,
+        photos: 0
+      };
+    }
+    groups[key].rows.push(row);
+    var operatorName = taskOperatorName(row);
+    if (operatorName && operatorName !== "未分配") groups[key].caregivers[operatorName] = true;
+    if (row.status === "completed") groups[key].completed += 1;
+    else if (row.status === "risk" || row.status === "refused") groups[key].abnormal += 1;
+    else groups[key].pending += 1;
+    if (extractTaskRecordNote(row)) groups[key].notes += 1;
+    groups[key].photos += extractTaskPhotos(row).length;
+  });
+  return Object.keys(groups).map(function(key){ return groups[key]; }).sort(function(a, b){
+    if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+    return a.elderName.localeCompare(b.elderName, "zh-CN");
+  });
+}
+
+function renderTaskGroupSummary(group) {
+  return '<div class="template-summary"><span>老人每日任务表 1 张</span></div>';
+}
+
+function renderTaskGroupDetailTable(group) {
+  var rows = (group && group.rows) || [];
+  if (!rows.length) return '<div class="empty-state">这张任务记录表暂无任务</div>';
+  var caregiverNames = Object.keys(group.caregivers || {});
+  return '<div style="margin-bottom:12px" class="template-summary">' +
+      '<span>日期：' + escHtml(group.date || "-") + '</span>' +
+      '<span>老人：' + escHtml(group.elderName || "-") + '</span>' +
+      '<span>老人 ID：' + escHtml(group.elderId || "-") + '</span>' +
+      (group.elderRoom ? '<span>房间：' + escHtml(group.elderRoom) + '</span>' : '') +
+      '<span>操作护工：' + escHtml(caregiverNames.join("、") || "未分配") + '</span>' +
+      '<span>共 ' + rows.length + ' 项任务</span>' +
+    '</div>' +
+    '<table class="template-detail-table"><thead><tr><th>时间</th><th>任务名称</th><th>操作护工</th><th>状态</th><th>文字记录</th><th>图片记录</th><th>来源</th></tr></thead><tbody>' +
+    rows.map(function(row){
+      var note = extractTaskRecordNote(row);
+      return '<tr>' +
+        '<td>' + escHtml(taskTimeLabel(row)) + '</td>' +
+        '<td><strong>' + escHtml(row.title || row.template_item_label || "-") + '</strong><br/><code>' + escHtml(row.id || "-") + '</code></td>' +
+        '<td>' + escHtml(taskOperatorName(row)) + '<br/><code>' + escHtml(taskCaregiverId(row)) + '</code></td>' +
+        '<td><span class="task-record-status ' + escHtml(row.status || "") + '">' + escHtml(taskStatusLabel(row.status)) + '</span></td>' +
+        '<td><div class="task-record-note">' + escHtml(note || "-") + '</div></td>' +
+        '<td>' + renderTaskPhotoButton(row) + '</td>' +
+        '<td>' + escHtml(taskSourceLabel(row)) + '</td>' +
+      '</tr>';
+    }).join("") + '</tbody></table>';
+}
+
+function renderEldersRawTable(data) {
+  S.rawRows = data.rows || [];
+  S.rawElderRows = S.rawRows;
+  S.rawTotal = data.total || 0;
+  var tbody = document.querySelector("#rawDataTable tbody");
+  var thead = document.querySelector("#rawDataTable thead");
+  var selectedInst = S.rawInstitutionId ? (S.institutions.find(function(i){ return i.id === S.rawInstitutionId; }) || null) : null;
+  var instText = selectedInst ? ((selectedInst.name || selectedInst.id) + " / " + selectedInst.id) : "全部机构";
+  var dateFilter = document.getElementById("rawRecordDate").value || new Date().toISOString().slice(0, 10);
+  document.getElementById("rawDataMeta").textContent =
+    "表 老人档案，机构：" + instText + "，共 " + S.rawTotal +
+    " 位老人。老人档案只展示业务字段；任务入口按日期 " + dateFilter +
+    " 查看该老人当天任务时间轴，来源包括日报实例模板和临时任务。";
+  document.getElementById("rawPageInfo").textContent = "offset " + data.offset + " / total " + S.rawTotal;
+  document.getElementById("rawPrevPage").disabled = data.offset <= 0;
+  document.getElementById("rawNextPage").disabled = data.offset + data.limit >= S.rawTotal;
+  thead.innerHTML = "<tr><th>老人</th><th>位置</th><th>护理等级</th><th>当前日报任务</th><th>默认负责人</th><th>家属/联系</th><th>任务时间轴</th></tr>";
+  if (!S.rawRows.length) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state">暂无老人档案</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = S.rawRows.map(function(row, index){
+    var templateTitle = row.report_template_title || row.reportTemplateTitle || row.report_template_id || row.reportTemplateId || "未绑定日报";
+    var caregiverId = row.assigned_caregiver_id || row.assignedCaregiverId || "";
+    var tags = Array.isArray(row.tags) ? row.tags.join("、") : (row.tags || "");
+    return '<tr>' +
+      '<td><div class="elder-profile-cell"><strong>' + escHtml(row.name || "-") + '</strong><code>' + escHtml(row.id || "-") + '</code><span class="muted">' + escHtml(row.gender || "-") + ' / ' + escHtml(row.age || "-") + '岁</span></div></td>' +
+      '<td>' + escHtml(row.floor || "-") + 'F / ' + escHtml(row.room || "-") + '<br/><span class="muted">' + escHtml(row.bed || "-") + '</span></td>' +
+      '<td>' + escHtml(row.level || "-") + (tags ? '<br/><span class="muted">' + escHtml(tags) + '</span>' : '') + '</td>' +
+      '<td><span class="elder-template-pill" title="' + escHtml(row.report_template_id || row.reportTemplateId || "") + '">' + escHtml(templateTitle) + '</span><br/><code>' + escHtml(row.report_template_id || row.reportTemplateId || "-") + '</code></td>' +
+      '<td>' + (caregiverId ? '<code>' + escHtml(caregiverId) + '</code>' : '<span class="muted">未分配</span>') + '</td>' +
+      '<td>' + escHtml(row.family_contact || row.familyContact || row.emergency_contact || "-") + '<br/><span class="muted">' + escHtml(row.family_phone || row.familyPhone || "-") + '</span></td>' +
+      '<td><div class="elder-task-entry"><button class="btn-ghost" data-action="raw-elder-timeline" data-index="' + index + '">查看任务时间轴</button></div></td>' +
+      '</tr>';
+  }).join("");
+}
+
+function renderTaskRecordsRawTable(data) {
+  S.rawRows = data.rows || [];
+  S.rawTaskGroups = buildTaskRecordGroups(S.rawRows);
+  S.rawTotal = data.total || 0;
+  var tbody = document.querySelector("#rawDataTable tbody");
+  var thead = document.querySelector("#rawDataTable thead");
+  var selectedInst = S.rawInstitutionId ? (S.institutions.find(function(i){ return i.id === S.rawInstitutionId; }) || null) : null;
+  var instText = selectedInst ? ((selectedInst.name || selectedInst.id) + " / " + selectedInst.id) : "全部机构";
+  var dateFilter = document.getElementById("rawRecordDate").value || "全部日期";
+  document.getElementById("rawDataMeta").textContent = "表 任务记录，机构：" + instText + "，日期：" + dateFilter + "，当前按老人索引到 " + S.rawTaskGroups.length + " 张每日任务表。临时任务会插入老人当天同一张表。";
+  document.getElementById("rawPageInfo").textContent = "当前页 " + S.rawTaskGroups.length + " 张每日任务表";
+  document.getElementById("rawPrevPage").disabled = data.offset <= 0;
+  document.getElementById("rawNextPage").disabled = data.offset + data.limit >= S.rawTotal;
+  thead.innerHTML = "<tr><th>日期</th><th>老人</th><th>每日任务表</th><th>操作护工</th><th>文字记录</th><th>图片记录</th><th>详情</th></tr>";
+  if (!S.rawTaskGroups.length) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state">暂无任务记录</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = S.rawTaskGroups.map(function(group, index){
+    var caregiverNames = Object.keys(group.caregivers || {});
+    var roomText = group.elderRoom ? '<br/><span class="muted">' + escHtml(group.elderRoom) + '</span>' : '';
+    return '<tr>' +
+      '<td>' + escHtml(group.date || "-") + '</td>' +
+      '<td><strong>' + escHtml(group.elderName || "未知老人") + '</strong>' + roomText + '</td>' +
+      '<td>' + renderTaskGroupSummary(group) + '</td>' +
+      '<td>' + escHtml(caregiverNames.join("、") || "未分配") + '</td>' +
+      '<td>' + (group.notes ? group.notes + " 项有文字" : "-") + '</td>' +
+      '<td>' + (group.photos ? group.photos + " 张" : "-") + '</td>' +
+      '<td><button class="btn-ghost" data-action="raw-task-group-detail" data-index="' + index + '">查看老人任务表</button></td>' +
+      '</tr>';
+  }).join("");
+}
+
+function caregiverRecordGroupKey(row) {
+  return (row.recordDate || "-") + "::" + (row.caregiverId || "unassigned") + "::" + (row.caregiverName || "未分配");
+}
+
+function buildCaregiverRecordGroups(rows) {
+  var groups = {};
+  rows.forEach(function(row){
+    var key = caregiverRecordGroupKey(row);
+    if (!groups[key]) {
+      groups[key] = {
+        key: key,
+        date: row.recordDate || "-",
+        caregiverId: row.caregiverId || "unassigned",
+        caregiverName: row.caregiverName || "未分配",
+        rows: [],
+        elders: {},
+        notes: 0,
+        photos: 0,
+        exceptions: 0
+      };
+    }
+    groups[key].rows.push(row);
+    if (row.elderName || row.elderId) groups[key].elders[row.elderName || row.elderId] = true;
+    if (row.note) groups[key].notes += 1;
+    groups[key].photos += Number(row.photoCount || 0);
+    if (row.operationType === "task_exception" || row.operationType === "quick_exception") groups[key].exceptions += 1;
+  });
+  return Object.keys(groups).map(function(key){ return groups[key]; }).sort(function(a, b){
+    if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+    return a.caregiverName.localeCompare(b.caregiverName, "zh-CN");
+  });
+}
+
+function renderCaregiverRecordGroupSummary(group) {
+  return '<div class="template-summary"><span>护工每日任务记录表 1 张</span></div>';
+}
+
+function renderCaregiverRecordGroupDetailTable(group) {
+  var rows = (group && group.rows) || [];
+  if (!rows.length) return '<div class="empty-state">这张护工任务记录表暂无操作记录</div>';
+  var elders = Object.keys(group.elders || {});
+  return '<div style="margin-bottom:12px" class="template-summary">' +
+      '<span>日期：' + escHtml(group.date || "-") + '</span>' +
+      '<span>护工：' + escHtml(group.caregiverName || "-") + '</span>' +
+      '<span>护工 ID：' + escHtml(group.caregiverId || "-") + '</span>' +
+      '<span>涉及老人：' + escHtml(elders.join("、") || "-") + '</span>' +
+      '<span>操作记录 ' + rows.length + ' 条</span>' +
+    '</div>' +
+    '<table class="template-detail-table"><thead><tr><th>时间</th><th>老人</th><th>任务</th><th>操作</th><th>文字记录</th><th>图片</th><th>来源</th></tr></thead><tbody>' +
+    rows.map(function(row){
+      return '<tr>' +
+        '<td>' + escHtml(row.operationTime || "-") + '</td>' +
+        '<td><strong>' + escHtml(row.elderName || "-") + '</strong></td>' +
+        '<td>' + escHtml(row.taskTitle || "-") + '</td>' +
+        '<td><span class="task-record-status">' + escHtml(row.operationLabel || row.operationType || "-") + '</span></td>' +
+        '<td><div class="task-record-note">' + escHtml(row.note || "-") + '</div></td>' +
+        '<td>' + (row.photoCount ? row.photoCount + " 张" : "-") + '</td>' +
+        '<td>' + escHtml(row.sourceTable || "-") + '</td>' +
+      '</tr>';
+    }).join("") + '</tbody></table>';
+}
+
+function renderCaregiverTaskRecordsRawTable(data) {
+  S.rawRows = data.rows || [];
+  S.rawCaregiverRecordGroups = buildCaregiverRecordGroups(S.rawRows);
+  S.rawTotal = data.total || 0;
+  var tbody = document.querySelector("#rawDataTable tbody");
+  var thead = document.querySelector("#rawDataTable thead");
+  var selectedInst = S.rawInstitutionId ? (S.institutions.find(function(i){ return i.id === S.rawInstitutionId; }) || null) : null;
+  var instText = selectedInst ? ((selectedInst.name || selectedInst.id) + " / " + selectedInst.id) : "全部机构";
+  var dateFilter = document.getElementById("rawRecordDate").value || "全部日期";
+  document.getElementById("rawDataMeta").textContent = "表 护工任务记录，机构：" + instText + "，日期：" + dateFilter + "，当前按护工索引到 " + S.rawCaregiverRecordGroups.length + " 张每日任务记录表。点开后查看任务卡操作流水。";
+  document.getElementById("rawPageInfo").textContent = "当前页 " + S.rawCaregiverRecordGroups.length + " 张护工每日记录表";
+  document.getElementById("rawPrevPage").disabled = data.offset <= 0;
+  document.getElementById("rawNextPage").disabled = data.offset + data.limit >= S.rawTotal;
+  thead.innerHTML = "<tr><th>日期</th><th>护工</th><th>每日任务记录表</th><th>涉及老人</th><th>文字记录</th><th>图片记录</th><th>异常记录</th><th>详情</th></tr>";
+  if (!S.rawCaregiverRecordGroups.length) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="empty-state">暂无护工任务记录</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = S.rawCaregiverRecordGroups.map(function(group, index){
+    var elders = Object.keys(group.elders || {});
+    return '<tr>' +
+      '<td>' + escHtml(group.date || "-") + '</td>' +
+      '<td><strong>' + escHtml(group.caregiverName || "未分配") + '</strong><br/><code>' + escHtml(group.caregiverId || "-") + '</code></td>' +
+      '<td>' + renderCaregiverRecordGroupSummary(group) + '</td>' +
+      '<td>' + escHtml(elders.join("、") || "-") + '</td>' +
+      '<td>' + (group.notes ? group.notes + " 项有文字" : "-") + '</td>' +
+      '<td>' + (group.photos ? group.photos + " 张" : "-") + '</td>' +
+      '<td>' + (group.exceptions ? group.exceptions + " 条" : "-") + '</td>' +
+      '<td><button class="btn-ghost" data-action="raw-caregiver-record-group-detail" data-index="' + index + '">查看护工记录表</button></td>' +
+      '</tr>';
+  }).join("");
+}
+
+function renderReportTemplateRowsTable(template) {
+  var sections = template.sections || [];
+  var rows = [];
+  sections.forEach(function(section, sectionIndex){
+    (section.items || []).forEach(function(item, itemIndex){
+      rows.push({
+        sectionIndex: sectionIndex + 1,
+        sectionTitle: section.title || "-",
+        itemIndex: itemIndex + 1,
+        label: item.label || "-",
+        timeWindow: item.timeWindow || "-",
+        frequencyDays: item.frequencyDays || 1,
+        requirePhoto: item.requirePhoto ? "是" : "否",
+        itemId: item.id || "-"
+      });
+    });
+  });
+  if (!rows.length) return '<div class="empty-state">这个模板暂无子项</div>';
+  return '<table class="template-detail-table"><thead><tr><th>栏目</th><th>子项</th><th>时间窗口</th><th>频率</th><th>拍照</th><th>子项 ID</th></tr></thead><tbody>' +
+    rows.map(function(row){
+      return '<tr>' +
+        '<td>' + row.sectionIndex + '. ' + escHtml(row.sectionTitle) + '</td>' +
+        '<td>' + row.itemIndex + '. ' + escHtml(row.label) + '</td>' +
+        '<td>' + escHtml(row.timeWindow) + '</td>' +
+        '<td>每 ' + escHtml(row.frequencyDays) + ' 天</td>' +
+        '<td>' + row.requirePhoto + '</td>' +
+        '<td><code>' + escHtml(row.itemId) + '</code></td>' +
+        '</tr>';
+    }).join("") + '</tbody></table>';
+}
+
+function renderReportTemplatesRawTable(data) {
+  S.rawRows = sortReportTemplatesAsTree(data.rows || []);
+  S.rawTotal = data.total || 0;
+  var tbody = document.querySelector("#rawDataTable tbody");
+  var thead = document.querySelector("#rawDataTable thead");
+  var selectedInst = S.rawInstitutionId ? (S.institutions.find(function(i){ return i.id === S.rawInstitutionId; }) || null) : null;
+  var instText = selectedInst ? ((selectedInst.name || selectedInst.id) + " / " + selectedInst.id) : "全部机构";
+  document.getElementById("rawDataMeta").textContent = "表 日报模板，机构：" + instText + "，共 " + S.rawTotal + " 条。按基础模板 -> 实例模板层级展示；实例模板的父模板来自 baseTemplateId。";
+  document.getElementById("rawPageInfo").textContent = "offset " + data.offset + " / total " + S.rawTotal;
+  document.getElementById("rawPrevPage").disabled = data.offset <= 0;
+  document.getElementById("rawNextPage").disabled = data.offset + data.limit >= S.rawTotal;
+  thead.innerHTML = "<tr><th>模板层级</th><th>类型</th><th>父模板</th><th>机构</th><th>版本</th><th>栏目/子项</th><th>更新人</th><th>来源</th><th>更新时间</th><th>详情</th></tr>";
+  if (!S.rawRows.length) {
+    tbody.innerHTML = '<tr><td colspan="10"><div class="empty-state">暂无日报模板</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = S.rawRows.map(function(row, index){
+    var template = getReportTemplatePayload(row);
+    var sectionCount = (template.sections || []).length;
+    var itemCount = countReportTemplateItems(template);
+    var type = getReportTemplateType(row);
+    var baseId = getReportTemplateBaseId(row);
+    var baseRow = baseId ? S.rawRows.find(function(item){ return item.id === baseId; }) : null;
+    var baseTemplate = baseRow ? getReportTemplatePayload(baseRow) : {};
+    var parentHtml = type === "base"
+      ? '<div class="template-parent-label"><strong>父节点</strong><span>基础模板本身不绑定父模板</span></div>'
+      : '<div class="template-parent-label"><strong>' + escHtml(baseRow ? (baseRow.title || baseTemplate.title || baseId) : (baseId ? "未找到父模板" : "未关联基础模板")) + '</strong><code>' + escHtml(baseId || "-") + '</code></div>';
+    return '<tr class="' + (type === "instance" ? "template-tree-row--child" : "template-tree-row--base") + '">' +
+      '<td><div class="template-tree-name">' +
+        (type === "instance" ? '<span class="template-tree-indent"></span>' : '') +
+        '<span class="template-tree-name__icon ' + (type === "instance" ? "child" : "") + '">' + (type === "base" ? "基" : "实") + '</span>' +
+        '<span class="template-tree-name__body"><strong>' + escHtml(row.title || template.title || row.id || "-") + '</strong><code>' + escHtml(row.id || "-") + '</code></span>' +
+      '</div></td>' +
+      '<td>' + escHtml(classifyReportTemplate(row)) + '</td>' +
+      '<td>' + parentHtml + '</td>' +
+      '<td><code>' + escHtml(row.institution_id || "-") + '</code></td>' +
+      '<td>v' + escHtml(row.version || template.version || 1) + '</td>' +
+      '<td><div class="template-summary"><span>' + sectionCount + ' 个栏目</span><span>' + itemCount + ' 个子项</span></div></td>' +
+      '<td>' + escHtml(row.updated_by || template.updatedBy || "-") + '</td>' +
+      '<td>' + escHtml(row.source || template.source || "-") + '</td>' +
+      '<td>' + formatDate(row.updated_at || template.updatedAt || "") + '</td>' +
+      '<td><button class="btn-ghost" data-action="raw-template-detail" data-index="' + index + '">查看内容</button></td>' +
+      '</tr>';
+  }).join("");
+}
+
+function renderRawTableSelect() {
+  var sel = document.getElementById("rawTableSelect");
+  sel.innerHTML = '<option value="">-- 选择数据表 --</option>' + S.rawTables.map(function(t){
+    return '<option value="' + escHtml(t.name) + '">' + escHtml(rawTableLabel(t.name)) + ' (' + (t.count || 0) + ')</option>';
+  }).join("");
+  if (S.rawTable) sel.value = S.rawTable;
+}
+
+function renderRawInstitutionSelect() {
+  var sel = document.getElementById("rawInstitutionSelect");
+  sel.innerHTML = '<option value="">全部机构</option>' +
+    S.institutions.map(function(i){
+      return '<option value="' + escHtml(i.id) + '">' + escHtml(i.name || i.id) + '</option>';
+    }).join("");
+  sel.value = S.rawInstitutionId || "";
+}
+
+function renderInstitutionsRawTable(data) {
+  S.rawRows = data.rows || [];
+  S.rawTotal = data.total || 0;
+  var tbody = document.querySelector("#rawDataTable tbody");
+  var thead = document.querySelector("#rawDataTable thead");
+  document.getElementById("rawDataMeta").textContent = "表 养老院机构，共 " + S.rawTotal + " 条。这里只展示机构业务信息，不展示 JSON。";
+  document.getElementById("rawPageInfo").textContent = "offset " + data.offset + " / total " + S.rawTotal;
+  document.getElementById("rawPrevPage").disabled = data.offset <= 0;
+  document.getElementById("rawNextPage").disabled = data.offset + data.limit >= S.rawTotal;
+  thead.innerHTML = "<tr><th>机构名称</th><th>机构 ID</th><th>楼层</th><th>状态</th><th>存储配额</th><th>已用存储</th><th>创建时间</th><th>更新时间</th></tr>";
+  if (!S.rawRows.length) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="empty-state">暂无养老院机构</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = S.rawRows.map(function(row){
+    var floors = Array.isArray(row.floors) ? row.floors : [];
+    var floorText = floors.length
+      ? floors.map(function(f){ return f.label || f.name || f.floor || "-"; }).join("、")
+      : "未设置";
+    return '<tr>' +
+      '<td><strong>' + escHtml(row.name || "-") + '</strong></td>' +
+      '<td><code>' + escHtml(row.id || "-") + '</code></td>' +
+      '<td>' + escHtml(floorText) + '</td>' +
+      '<td>' + escHtml(row.status || "-") + '</td>' +
+      '<td>' + formatBytes(Number(row.storage_quota_bytes || 0)) + '</td>' +
+      '<td>' + formatBytes(Number(row.storage_used_bytes || 0)) + '</td>' +
+      '<td>' + formatDate(row.created_at || "") + '</td>' +
+      '<td>' + formatDate(row.updated_at || "") + '</td>' +
+      '</tr>';
+  }).join("");
+}
+
+function caregiverAccountStatusLabel(status) {
+  if (status === "active") return '<span class="badge badge-active">账号正常</span>';
+  if (status === "disabled") return '<span class="badge badge-disabled">账号已禁用</span>';
+  return '<span class="badge badge-suspended">未创建账号</span>';
+}
+
+function renderCaregiverDetailTable(row) {
+  if (!row) return '<div class="empty-state">没有护工档案</div>';
+  var rows = [
+    ["姓名", row.name || "-"],
+    ["岗位", row.position || "护工"],
+    ["工号", row.employeeNo || "-"],
+    ["负责楼层", row.floor ? row.floor + "F" : "-"],
+    ["班次", row.shift || "-"],
+    ["登录账号", row.username || "-"],
+    ["账号显示名", row.accountDisplayName || "-"],
+    ["账号状态", row.accountStatus === "active" ? "账号正常" : row.accountStatus === "disabled" ? "账号已禁用" : "未创建账号"],
+    ["登录密码", row.password || "历史账号未记录明文密码，请重置后显示"],
+    ["联系电话", row.phone || "-"],
+    ["创建时间", row.createdAt || "-"],
+    ["更新时间", row.updatedAt || "-"],
+  ];
+  return '<table class="template-detail-table"><tbody>' + rows.map(function(item){
+    return '<tr><th>' + escHtml(item[0]) + '</th><td>' + escHtml(item[1]) + '</td></tr>';
+  }).join("") + '</tbody></table>';
+}
+
+function renderCaregiversRawTable(data) {
+  S.rawRows = data.rows || [];
+  S.rawTotal = data.total || 0;
+  var tbody = document.querySelector("#rawDataTable tbody");
+  var thead = document.querySelector("#rawDataTable thead");
+  var selectedInst = S.rawInstitutionId ? (S.institutions.find(function(i){ return i.id === S.rawInstitutionId; }) || null) : null;
+  var instText = selectedInst ? ((selectedInst.name || selectedInst.id) + " / " + selectedInst.id) : "全部机构";
+  document.getElementById("rawDataMeta").textContent = "表 护工档案，机构：" + instText + "，共 " + S.rawTotal + " 条。这里显示院长端可编辑的护工档案字段，不展示 JSON。状态来自员工考勤表，不属于护工档案设置。";
+  document.getElementById("rawPageInfo").textContent = "offset " + data.offset + " / total " + S.rawTotal;
+  document.getElementById("rawPrevPage").disabled = data.offset <= 0;
+  document.getElementById("rawNextPage").disabled = data.offset + data.limit >= S.rawTotal;
+  thead.innerHTML = "<tr><th>姓名</th><th>岗位</th><th>工号</th><th>负责楼层</th><th>班次</th><th>登录账号</th><th>账号状态</th><th>联系电话</th><th>更新时间</th><th>详情</th></tr>";
+  if (!S.rawRows.length) {
+    tbody.innerHTML = '<tr><td colspan="10"><div class="empty-state">暂无护工档案</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = S.rawRows.map(function(row, index){
+    return '<tr>' +
+      '<td><strong>' + escHtml(row.name || "-") + '</strong></td>' +
+      '<td>' + escHtml(row.position || "护工") + '</td>' +
+      '<td>' + escHtml(row.employeeNo || "-") + '</td>' +
+      '<td>' + escHtml(row.floor ? row.floor + "F" : "-") + '</td>' +
+      '<td>' + escHtml(row.shift || "-") + '</td>' +
+      '<td>' + escHtml(row.username || "-") + '</td>' +
+      '<td>' + caregiverAccountStatusLabel(row.accountStatus || "") + '</td>' +
+      '<td>' + escHtml(row.phone || "-") + '</td>' +
+      '<td>' + escHtml(row.updatedAt || "-") + '</td>' +
+      '<td><button class="btn-ghost" data-action="raw-caregiver-detail" data-index="' + index + '">查看详情</button></td>' +
+      '</tr>';
+  }).join("");
+}
+
+function anomalyElderKey(row) {
+  return (row.institutionId || "") + "::" + (row.elderId || "unknown") + "::" + (row.elderName || "未知老人");
+}
+
+function buildAnomalyGroups(rows) {
+  var groups = {};
+  rows.forEach(function(row){
+    var key = anomalyElderKey(row);
+    if (!groups[key]) {
+      groups[key] = {
+        key: key,
+        institutionId: row.institutionId || "",
+        elderId: row.elderId || "unknown",
+        elderName: row.elderName || "未知老人",
+        rows: [],
+        caregivers: {},
+        taskCount: 0,
+        quickCount: 0,
+        photoCount: 0,
+        latestAt: ""
+      };
+    }
+    groups[key].rows.push(row);
+    if (row.caregiverName || row.caregiverId) groups[key].caregivers[row.caregiverName || row.caregiverId] = true;
+    if (row.sourceTable === "published_tasks") groups[key].taskCount += 1;
+    if (row.sourceTable === "anomalies") groups[key].quickCount += 1;
+    groups[key].photoCount += Number(row.photoCount || 0);
+    if ((row.reportedAt || "") > groups[key].latestAt) groups[key].latestAt = row.reportedAt || "";
+  });
+  return Object.keys(groups).map(function(key){ return groups[key]; }).sort(function(a, b){
+    return (b.latestAt || "").localeCompare(a.latestAt || "");
+  });
+}
+
+function renderAnomalyGroupDetailTable(group) {
+  var rows = (group && group.rows) || [];
+  if (!rows.length) return '<div class="empty-state">这个老人暂无异常记录</div>';
+  var caregivers = Object.keys(group.caregivers || {});
+  return '<div style="margin-bottom:12px" class="template-summary">' +
+      '<span>老人：' + escHtml(group.elderName || "-") + '</span>' +
+      '<span>提交护工：' + escHtml(caregivers.join("、") || "-") + '</span>' +
+      '<span>任务卡异常 ' + group.taskCount + ' 条</span>' +
+      '<span>快速异常 ' + group.quickCount + ' 条</span>' +
+    '</div>' +
+    '<table class="template-detail-table"><thead><tr><th>时间</th><th>来源</th><th>任务卡</th><th>提交护工</th><th>异常类型</th><th>说明</th><th>图片</th></tr></thead><tbody>' +
+    rows.map(function(row){
+      return '<tr>' +
+        '<td>' + escHtml(row.reportedAt || "-") + '</td>' +
+        '<td>' + escHtml(row.source || "-") + '</td>' +
+        '<td>' + escHtml(row.taskTitle || "-") + '</td>' +
+        '<td>' + escHtml(row.caregiverName || "-") + '</td>' +
+        '<td>' + escHtml(row.type || "-") + '</td>' +
+        '<td><div class="task-record-note">' + escHtml(row.note || "-") + '</div></td>' +
+        '<td>' + (row.photoCount ? row.photoCount + " 张" : "-") + '</td>' +
+      '</tr>';
+    }).join("") + '</tbody></table>';
+}
+
+function renderAnomaliesRawTable(data) {
+  S.rawRows = data.rows || [];
+  S.rawAnomalyGroups = buildAnomalyGroups(S.rawRows);
+  S.rawTotal = data.total || 0;
+  var tbody = document.querySelector("#rawDataTable tbody");
+  var thead = document.querySelector("#rawDataTable thead");
+  var selectedInst = S.rawInstitutionId ? (S.institutions.find(function(i){ return i.id === S.rawInstitutionId; }) || null) : null;
+  var instText = selectedInst ? ((selectedInst.name || selectedInst.id) + " / " + selectedInst.id) : "全部机构";
+  document.getElementById("rawDataMeta").textContent = "表 异常事件，机构：" + instText + "，当前按老人索引到 " + S.rawAnomalyGroups.length + " 张异常汇总表。包含异常任务卡和快速异常。";
+  document.getElementById("rawPageInfo").textContent = "当前页 " + S.rawAnomalyGroups.length + " 张老人异常汇总表";
+  document.getElementById("rawPrevPage").disabled = data.offset <= 0;
+  document.getElementById("rawNextPage").disabled = data.offset + data.limit >= S.rawTotal;
+  thead.innerHTML = "<tr><th>老人</th><th>异常汇总</th><th>提交护工</th><th>任务卡异常</th><th>快速异常</th><th>图片</th><th>最近时间</th><th>详情</th></tr>";
+  if (!S.rawAnomalyGroups.length) {
+    tbody.innerHTML = '<tr><td colspan="8"><div class="empty-state">暂无异常事件</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = S.rawAnomalyGroups.map(function(group, index){
+    var caregivers = Object.keys(group.caregivers || {});
+    return '<tr>' +
+      '<td><strong>' + escHtml(group.elderName || "未知老人") + '</strong></td>' +
+      '<td><div class="template-summary"><span>老人异常汇总表 1 张</span></div></td>' +
+      '<td>' + escHtml(caregivers.join("、") || "-") + '</td>' +
+      '<td>' + (group.taskCount ? group.taskCount + " 条" : "-") + '</td>' +
+      '<td>' + (group.quickCount ? group.quickCount + " 条" : "-") + '</td>' +
+      '<td>' + (group.photoCount ? group.photoCount + " 张" : "-") + '</td>' +
+      '<td>' + escHtml(group.latestAt || "-") + '</td>' +
+      '<td><button class="btn-ghost" data-action="raw-anomaly-group-detail" data-index="' + index + '">查看异常汇总</button></td>' +
+      '</tr>';
+  }).join("");
+}
+
+function attendanceRecordShiftId(row) {
+  var raw = String(row.shift_id || row.shiftId || "").toLowerCase();
+  if (raw === "noon") return "afternoon";
+  if (raw === "evening") return "night";
+  return raw || "morning";
+}
+
+function attendanceClockTime(row) {
+  var raw = String(row.clock_in_at || row.clockInAt || "");
+  if (!raw) return "";
+  return raw.slice(11, 16) || raw;
+}
+
+function buildAttendanceGroups(rows) {
+  var groups = {};
+  rows.forEach(function(row){
+    var key = [row.institution_id || "", row.record_date || "", row.caregiver_id || ""].join("::");
+    if (!groups[key]) {
+      groups[key] = {
+        key: key,
+        institutionId: row.institution_id || "",
+        recordDate: row.record_date || "",
+        caregiverId: row.caregiver_id || "",
+        caregiverName: row.caregiver_name || "",
+        employeeNo: row.employee_no || "",
+        registeredUserId: row.registered_user_id || "",
+        username: row.username || "",
+        shifts: {},
+        rawRows: []
+      };
+    }
+    var shiftId = attendanceRecordShiftId(row);
+    groups[key].shifts[shiftId] = row;
+    groups[key].rawRows.push(row);
+    groups[key].caregiverName = groups[key].caregiverName || row.caregiver_name || "";
+    groups[key].employeeNo = groups[key].employeeNo || row.employee_no || "";
+    groups[key].registeredUserId = groups[key].registeredUserId || row.registered_user_id || "";
+    groups[key].username = groups[key].username || row.username || "";
+  });
+  return Object.keys(groups).map(function(key){ return groups[key]; }).sort(function(a, b){
+    return String(b.recordDate || "").localeCompare(String(a.recordDate || "")) ||
+      String(a.caregiverName || "").localeCompare(String(b.caregiverName || ""), "zh-CN");
+  });
+}
+
+function renderAttendanceShiftCell(group, shiftId, label) {
+  var row = group.shifts && group.shifts[shiftId];
+  if (!row || !(row.clock_in_at || row.clockInAt)) {
+    return '<div><strong>' + escHtml(label) + '</strong><br>' + attendanceStatusBadge("absent") + '<br><small>未打卡</small></div>';
+  }
+  var status = row.status || (row.late ? "late" : "present");
+  var lateMinutes = Number(row.late_minutes || row.lateMinutes || 0) || 0;
+  var range = (row.shift_start || "") && (row.shift_end || "") ? row.shift_start + " - " + row.shift_end : "";
+  return '<div><strong>' + escHtml(row.shift_name || label) + '</strong><br>' +
+    attendanceStatusBadge(status, lateMinutes) +
+    '<br><small>打卡 ' + escHtml(attendanceClockTime(row) || "-") + (range ? " / " + escHtml(range) : "") + '</small></div>';
+}
+
+function renderAttendanceRawTable(data) {
+  S.rawRows = data.rows || [];
+  S.rawAttendanceGroups = buildAttendanceGroups(S.rawRows);
+  S.rawTotal = data.total || 0;
+  var tbody = document.querySelector("#rawDataTable tbody");
+  var thead = document.querySelector("#rawDataTable thead");
+  var selectedInst = S.rawInstitutionId ? (S.institutions.find(function(i){ return i.id === S.rawInstitutionId; }) || null) : null;
+  var instText = selectedInst ? ((selectedInst.name || selectedInst.id) + " / " + selectedInst.id) : "全部机构";
+  document.getElementById("rawDataMeta").textContent = "表 护工考勤表，机构：" + instText + "，当前按日期 + 护工索引到 " + S.rawAttendanceGroups.length + " 张考勤表。早中晚班均显示，未打卡班次显示缺勤。";
+  document.getElementById("rawPageInfo").textContent = "当前页 " + S.rawAttendanceGroups.length + " 张考勤表";
+  document.getElementById("rawPrevPage").disabled = data.offset <= 0;
+  document.getElementById("rawNextPage").disabled = data.offset + data.limit >= S.rawTotal;
+  thead.innerHTML = "<tr><th>日期</th><th>护工</th><th>注册账号</th><th>早班</th><th>中班</th><th>晚班</th><th>原始记录</th></tr>";
+  if (!S.rawAttendanceGroups.length) {
+    tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state">暂无考勤记录</div></td></tr>';
+    return;
+  }
+  tbody.innerHTML = S.rawAttendanceGroups.map(function(group, index){
+    return '<tr>' +
+      '<td><strong>' + escHtml(group.recordDate || "-") + '</strong></td>' +
+      '<td><div class="elder-profile-cell"><strong>' + escHtml(group.caregiverName || "-") + '</strong><code>工号：' + escHtml(group.employeeNo || "-") + '</code></div></td>' +
+      '<td><div class="elder-profile-cell"><strong>' + escHtml(group.username || "-") + '</strong><code>' + escHtml(group.registeredUserId || "-") + '</code></div></td>' +
+      '<td>' + renderAttendanceShiftCell(group, "morning", "早班") + '</td>' +
+      '<td>' + renderAttendanceShiftCell(group, "afternoon", "中班") + '</td>' +
+      '<td>' + renderAttendanceShiftCell(group, "night", "晚班") + '</td>' +
+      '<td><button class="btn-ghost" data-action="raw-attendance-detail" data-index="' + index + '">查看班次记录</button></td>' +
+      '</tr>';
+  }).join("");
+}
+
+function renderAttendanceGroupDetailTable(group) {
+  if (!group) return '<div class="empty-state">没有考勤表</div>';
+  var shiftDefs = [
+    { id: "morning", label: "早班" },
+    { id: "afternoon", label: "中班" },
+    { id: "night", label: "晚班" }
+  ];
+  return '<div style="margin-bottom:12px" class="template-summary">' +
+      '<span>日期：' + escHtml(group.recordDate || "-") + '</span>' +
+      '<span>护工：' + escHtml(group.caregiverName || "-") + '</span>' +
+      '<span>账号：' + escHtml(group.username || "-") + '</span>' +
+    '</div>' +
+    '<table class="template-detail-table"><thead><tr><th>班次</th><th>班次时间</th><th>打卡时间</th><th>状态</th><th>迟到分钟</th><th>来源</th></tr></thead><tbody>' +
+    shiftDefs.map(function(shift){
+      var row = group.shifts && group.shifts[shift.id];
+      var status = row ? (row.status || (row.late ? "late" : "present")) : "absent";
+      return '<tr>' +
+        '<td>' + escHtml((row && row.shift_name) || shift.label) + '</td>' +
+        '<td>' + escHtml(row ? ((row.shift_start || "-") + " - " + (row.shift_end || "-")) : "-") + '</td>' +
+        '<td>' + escHtml(row ? (attendanceClockTime(row) || "-") : "-") + '</td>' +
+        '<td>' + attendanceStatusBadge(status, row ? Number(row.late_minutes || 0) : 0) + '</td>' +
+        '<td>' + escHtml(row ? (row.late_minutes || 0) : 0) + '</td>' +
+        '<td>' + escHtml(row ? (row.source || "-") : "-") + '</td>' +
+      '</tr>';
+    }).join("") + '</tbody></table>';
+}
+
+function renderRawDataTable(data) {
+  if (data.table === "caregivers") {
+    renderCaregiversRawTable(data);
+    return;
+  }
+  if (data.table === "elders") {
+    renderEldersRawTable(data);
+    return;
+  }
+  if (data.table === "attendance_records") {
+    renderAttendanceRawTable(data);
+    return;
+  }
+  if (data.table === "institutions") {
+    renderInstitutionsRawTable(data);
+    return;
+  }
+  if (data.table === "anomalies") {
+    renderAnomaliesRawTable(data);
+    return;
+  }
+  if (data.table === "caregiver_task_records") {
+    renderCaregiverTaskRecordsRawTable(data);
+    return;
+  }
+  if (data.table === "published_tasks") {
+    renderTaskRecordsRawTable(data);
+    return;
+  }
+  if (data.table === "daily_report_templates") {
+    renderReportTemplatesRawTable(data);
+    return;
+  }
+  S.rawRows = data.rows || [];
+  S.rawTotal = data.total || 0;
+  var columns = data.columns || [];
+  var tbody = document.querySelector("#rawDataTable tbody");
+  var thead = document.querySelector("#rawDataTable thead");
+  var selectedInst = S.rawInstitutionId ? (S.institutions.find(function(i){ return i.id === S.rawInstitutionId; }) || null) : null;
+  var instText = selectedInst ? ((selectedInst.name || selectedInst.id) + " / " + selectedInst.id) : "全部机构";
+  document.getElementById("rawDataMeta").textContent = "表 " + rawTableLabel(data.table) + "，机构：" + instText + "，共 " + S.rawTotal + " 条。当前显示 " + (data.offset + 1) + "-" + Math.min(data.offset + data.limit, S.rawTotal) + "；脱敏字段：" + ((data.redactedColumns || []).join(", ") || "无");
+  document.getElementById("rawPageInfo").textContent = "offset " + data.offset + " / total " + S.rawTotal;
+  document.getElementById("rawPrevPage").disabled = data.offset <= 0;
+  document.getElementById("rawNextPage").disabled = data.offset + data.limit >= S.rawTotal;
+  if (!columns.length || !S.rawRows.length) {
+    thead.innerHTML = "<tr><th>数据</th></tr>";
+    tbody.innerHTML = '<tr><td><div class="empty-state">暂无数据</div></td></tr>';
+    return;
+  }
+  var visibleColumns = columns.slice(0, 10);
+  thead.innerHTML = "<tr>" + visibleColumns.map(function(c){ return "<th>" + escHtml(c) + "</th>"; }).join("") + "<th>详情</th></tr>";
+  tbody.innerHTML = S.rawRows.map(function(row, index){
+    return "<tr>" + visibleColumns.map(function(c){
+      return '<td class="raw-cell" title="' + escHtml(formatRawValue(row[c])) + '">' + escHtml(formatRawValue(row[c])) + "</td>";
+    }).join("") + '<td><button class="btn-ghost" data-action="raw-detail" data-index="' + index + '">查看 JSON</button></td></tr>';
+  }).join("");
+}
+
 function populateInstitutionSelect(selId, allOption) {
   var sel = document.getElementById(selId);
   sel.innerHTML = (allOption || '<option value="">-- 全部机构 --</option>') +
@@ -591,10 +1645,10 @@ var tabConfig = {
   users: { load: function(){ populateInstitutionSelect("userInstitutionSelect", '<option value="">-- 选择机构 --</option>'); if(S.selectedInstId) loadUsers(S.selectedInstId); } },
   elders: { load: function(){ populateInstitutionSelect("elderInstitutionSelect"); loadElders(); } },
   templates: { load: function(){ populateInstitutionSelect("templateInstitutionSelect"); loadTemplates(); } },
-  careRecords: { load: function(){ populateInstitutionSelect("crInstitutionSelect"); loadCareRecords(); } },
   tasks: { load: function(){ populateInstitutionSelect("taskInstitutionSelect"); loadTasks(); } },
   sessions: { load: loadSessions },
   appReleases: { load: loadAppReleases },
+  rawData: { load: loadRawDataTab },
   hierarchy: { load: loadHierarchy }
 };
 
@@ -605,6 +1659,7 @@ function switchTab(name) {
   });
   var cfg = tabConfig[name];
   if (cfg && cfg.load) cfg.load();
+  renderRealtimeStatus();
 }
 
 /* ====== DATA LOADING ====== */
@@ -640,18 +1695,6 @@ async function loadTemplates() {
   } catch(e) { toast(e.message, "error"); }
 }
 
-async function loadCareRecords() {
-  try {
-    var instId = document.getElementById("crInstitutionSelect").value;
-    var elder = document.getElementById("crElderSearch").value.trim();
-    var params = "?limit=100";
-    if (instId) params += "&institutionId=" + encodeURIComponent(instId);
-    if (elder) params += "&elderName=" + encodeURIComponent(elder);
-    var list = await api("GET", "/api/admin/care-records" + params);
-    renderCareRecordsTable(list);
-  } catch(e) { toast(e.message, "error"); }
-}
-
 async function loadTasks() {
   try {
     var instId = document.getElementById("taskInstitutionSelect").value;
@@ -676,6 +1719,55 @@ async function loadAppReleases() {
     var list = await api("GET", "/api/admin/app-releases");
     renderAppReleasesTable(list);
   } catch(e) { toast(e.message, "error"); }
+}
+
+async function loadRawDataTab() {
+  try {
+    if (!S.institutions.length) {
+      S.institutions = await api("GET", "/api/admin/institutions");
+    }
+    renderRawInstitutionSelect();
+    if (!S.rawTables.length) {
+      S.rawTables = await api("GET", "/api/admin/tables");
+      renderRawTableSelect();
+      if (!S.rawTable && S.rawTables.length) {
+        var taskTable = S.rawTables.find(function(t){ return t.name === "published_tasks"; });
+        S.rawTable = (taskTable || S.rawTables[0]).name;
+        document.getElementById("rawTableSelect").value = S.rawTable;
+      }
+    }
+    if (S.rawTable) loadRawData();
+  } catch(e) { toast(e.message, "error"); }
+}
+
+async function loadRawData() {
+  var seq = ++S.rawLoadSeq;
+  try {
+    var table = document.getElementById("rawTableSelect").value;
+    if (!table) return;
+    S.rawTable = table;
+    var tbody = document.querySelector("#rawDataTable tbody");
+    var thead = document.querySelector("#rawDataTable thead");
+    thead.innerHTML = "<tr><th>数据</th></tr>";
+    tbody.innerHTML = '<tr><td><div class="empty-state">正在加载 ' + escHtml(rawTableLabel(table)) + '...</div></td></tr>';
+    var limit = Number(document.getElementById("rawLimitSelect").value || 100);
+    var params = new URLSearchParams();
+    params.set("limit", String(limit));
+    params.set("offset", String(S.rawOffset));
+    var instId = S.rawInstitutionId || "";
+    var tableMeta = S.rawTables.find(function(t){ return t.name === table; });
+    document.getElementById("rawInstitutionSelect").disabled = !(tableMeta && tableMeta.hasInstitutionId);
+    if (instId && tableMeta && tableMeta.hasInstitutionId) params.set("institutionId", instId);
+    var recordDate = document.getElementById("rawRecordDate").value;
+    if ((table === "published_tasks" || table === "caregiver_task_records" || table === "attendance_records") && recordDate) params.set("recordDate", recordDate);
+    var search = document.getElementById("rawSearch").value.trim();
+    if (search) params.set("search", search);
+    var data = await api("GET", "/api/admin/tables/" + encodeURIComponent(table) + "?" + params.toString());
+    if (seq !== S.rawLoadSeq || table !== S.rawTable) return;
+    renderRawDataTable(data);
+  } catch(e) {
+    if (seq === S.rawLoadSeq) toast(e.message, "error");
+  }
 }
 
 async function loadHierarchy() {
@@ -736,6 +1828,17 @@ document.getElementById("loginForm").addEventListener("submit", function(e){
 
 // Logout
 document.getElementById("logoutBtn").addEventListener("click", function(){ clearAuth(); showLogin(); toast("已退出登录"); });
+
+document.getElementById("btnRealtimeToggle").addEventListener("click", function(){
+  S.realtimeEnabled = !S.realtimeEnabled;
+  S.realtimeLastError = "";
+  renderRealtimeStatus();
+  if (S.realtimeEnabled) refreshCurrentView({ realtime: true });
+});
+document.getElementById("btnRealtimeNow").addEventListener("click", function(){
+  refreshCurrentView({ realtime: false });
+});
+document.addEventListener("visibilitychange", function(){ renderRealtimeStatus(document.hidden ? "页面在后台" : ""); });
 
 // Sidebar tabs
 document.querySelectorAll(".sidebar-nav li[data-tab]").forEach(function(li){
@@ -809,7 +1912,6 @@ document.getElementById("sessionsTable").addEventListener("click", function(e){
 // Institution selectors for data tabs
 document.getElementById("elderInstitutionSelect").addEventListener("change", loadElders);
 document.getElementById("templateInstitutionSelect").addEventListener("change", loadTemplates);
-document.getElementById("crInstitutionSelect").addEventListener("change", loadCareRecords);
 document.getElementById("taskInstitutionSelect").addEventListener("change", loadTasks);
 document.getElementById("userInstitutionSelect").addEventListener("change", function(){
   S.selectedInstId = this.value;
@@ -823,11 +1925,261 @@ function debounceElderSearch(key, fn) {
   clearTimeout(elderSearchTimers[key]);
   elderSearchTimers[key] = setTimeout(fn, 300);
 }
-document.getElementById("crElderSearch").addEventListener("input", function(){
-  debounceElderSearch("cr", loadCareRecords);
-});
 document.getElementById("taskElderSearch").addEventListener("input", function(){
   debounceElderSearch("task", loadTasks);
+});
+
+// Raw data controls
+document.getElementById("rawTableSelect").addEventListener("change", function(){
+  S.rawOffset = 0;
+  S.rawTable = this.value;
+  loadRawData();
+});
+document.getElementById("rawInstitutionSelect").addEventListener("change", function(){
+  S.rawOffset = 0;
+  S.rawInstitutionId = this.value;
+  S.rawRows = [];
+  document.querySelector("#rawDataTable tbody").innerHTML = '<tr><td><div class="empty-state">正在按机构筛选...</div></td></tr>';
+  loadRawData();
+});
+document.getElementById("rawLimitSelect").addEventListener("change", function(){ S.rawOffset = 0; loadRawData(); });
+document.getElementById("btnRefreshRawData").addEventListener("click", function(){ S.rawOffset = 0; loadRawData(); });
+document.getElementById("rawRecordDate").addEventListener("change", function(){ S.rawOffset = 0; loadRawData(); });
+document.getElementById("rawSearch").addEventListener("input", function(){
+  debounceElderSearch("raw", function(){ S.rawOffset = 0; loadRawData(); });
+});
+document.getElementById("rawPrevPage").addEventListener("click", function(){
+  var limit = Number(document.getElementById("rawLimitSelect").value || 100);
+  S.rawOffset = Math.max(0, S.rawOffset - limit);
+  loadRawData();
+});
+document.getElementById("rawNextPage").addEventListener("click", function(){
+  var limit = Number(document.getElementById("rawLimitSelect").value || 100);
+  S.rawOffset += limit;
+  loadRawData();
+});
+
+function openTaskEvidence(taskId) {
+  document.getElementById("rawDetailTitle").textContent = "任务图片记录";
+  var jsonElForEvidence = document.getElementById("rawDetailContent");
+  var tableElForEvidence = document.getElementById("rawDetailTableContent");
+  jsonElForEvidence.style.display = "none";
+  tableElForEvidence.style.display = "";
+  tableElForEvidence.innerHTML = '<div class="empty-state">正在加载图片...</div>';
+  showModal("modalRawDetail");
+  api("GET", "/api/admin/task-records/" + encodeURIComponent(taskId) + "/evidence")
+    .then(function(data){
+      document.getElementById("rawDetailTitle").textContent = "任务图片记录：" + (data.title || data.id || "");
+      S.rawEvidenceDetailHtml = renderTaskEvidenceDetail(data);
+      tableElForEvidence.innerHTML = S.rawEvidenceDetailHtml;
+    })
+    .catch(function(err){
+      tableElForEvidence.innerHTML = '<div class="empty-state">图片加载失败：' + escHtml(err.message || "未知错误") + '</div>';
+    });
+}
+
+function openElderTaskTimeline(elder) {
+  if (!elder || !elder.id) return;
+  var date = document.getElementById("rawRecordDate").value || new Date().toISOString().slice(0, 10);
+  var institutionId = S.rawInstitutionId || elder.institution_id || elder.institutionId || "";
+  var params = new URLSearchParams();
+  params.set("limit", "300");
+  params.set("offset", "0");
+  params.set("recordDate", date);
+  params.set("elderId", elder.id);
+  if (institutionId) params.set("institutionId", institutionId);
+  document.getElementById("rawDetailTitle").textContent = "老人任务时间轴：" + (elder.name || elder.id || "-");
+  var jsonEl = document.getElementById("rawDetailContent");
+  var tableEl = document.getElementById("rawDetailTableContent");
+  jsonEl.style.display = "none";
+  tableEl.style.display = "";
+  tableEl.innerHTML = '<div class="empty-state">正在加载老人当天任务时间轴...</div>';
+  showModal("modalRawDetail");
+  api("GET", "/api/admin/tables/published_tasks?" + params.toString()).then(function(data){
+    var rows = (data.rows || []).filter(function(row){ return (row.elder_id || row.elderId || "") === elder.id; });
+    rows.sort(function(a, b){ return String(taskTimeLabel(a)).localeCompare(String(taskTimeLabel(b)), "zh-CN", { numeric: true }); });
+    var group = {
+      date: date,
+      elderId: elder.id,
+      elderName: elder.name || elder.id,
+      elderRoom: elder.room || "",
+      rows: rows,
+      caregivers: {}
+    };
+    rows.forEach(function(row){
+      var operatorName = taskOperatorName(row);
+      if (operatorName && operatorName !== "未分配" && operatorName.indexOf("分配") < 0) group.caregivers[operatorName] = true;
+    });
+    document.getElementById("rawDetailTitle").textContent = "老人任务时间轴：" + (elder.name || elder.id || "-") + " / " + date;
+    tableEl.innerHTML =
+      '<div style="margin-bottom:12px" class="template-summary">' +
+        '<span>老人档案：' + escHtml(elder.name || "-") + '</span>' +
+        '<span>房间：' + escHtml((elder.floor || "-") + "F / " + (elder.room || "-")) + '</span>' +
+        '<span>当前日报：' + escHtml(elder.report_template_title || elder.report_template_id || "未绑定") + '</span>' +
+        '<span>默认负责人：' + escHtml(elder.assigned_caregiver_id || "未分配") + '</span>' +
+        '<span>任务时间轴 = 日报实例模板任务 + 临时任务</span>' +
+      '</div>' +
+      renderTaskGroupDetailTable(group);
+  }).catch(function(err){
+    tableEl.innerHTML = '<div class="empty-state">加载失败：' + escHtml(err.message || "未知错误") + '</div>';
+  });
+}
+
+function openTaskGroupDetail(group) {
+  if (!group || !group.elderId) return;
+  var date = group.date || document.getElementById("rawRecordDate").value || new Date().toISOString().slice(0, 10);
+  var firstRow = (group.rows && group.rows[0]) || {};
+  var institutionId = S.rawInstitutionId || firstRow.institution_id || firstRow.institutionId || "";
+  var params = new URLSearchParams();
+  params.set("limit", "300");
+  params.set("offset", "0");
+  params.set("recordDate", date);
+  params.set("elderId", group.elderId);
+  if (institutionId) params.set("institutionId", institutionId);
+
+  document.getElementById("rawDetailTitle").textContent = "老人每日任务表：" + date + " / " + (group.elderName || group.elderId || "-");
+  var jsonEl = document.getElementById("rawDetailContent");
+  var tableEl = document.getElementById("rawDetailTableContent");
+  jsonEl.style.display = "none";
+  tableEl.style.display = "";
+  tableEl.innerHTML = '<div class="empty-state">正在加载完整老人每日任务表...</div>';
+  showModal("modalRawDetail");
+
+  api("GET", "/api/admin/tables/published_tasks?" + params.toString()).then(function(data){
+    var rows = (data.rows || []).filter(function(row){ return (row.elder_id || row.elderId || "") === group.elderId; });
+    rows.sort(function(a, b){ return String(taskTimeLabel(a)).localeCompare(String(taskTimeLabel(b)), "zh-CN", { numeric: true }); });
+    var fullGroup = {
+      key: group.key,
+      date: date,
+      elderId: group.elderId,
+      elderName: group.elderName || taskElderName(rows[0] || {}) || group.elderId,
+      elderRoom: group.elderRoom || (rows[0] && rows[0].elder_room) || "",
+      rows: rows,
+      caregivers: {},
+      completed: 0,
+      pending: 0,
+      abnormal: 0,
+      notes: 0,
+      photos: 0
+    };
+    rows.forEach(function(row){
+      var operatorName = taskOperatorName(row);
+      if (operatorName && taskCaregiverId(row)) fullGroup.caregivers[operatorName] = true;
+      if (row.status === "completed") fullGroup.completed += 1;
+      else if (row.status === "risk" || row.status === "refused") fullGroup.abnormal += 1;
+      else fullGroup.pending += 1;
+      if (extractTaskRecordNote(row)) fullGroup.notes += 1;
+      fullGroup.photos += extractTaskPhotos(row).length;
+    });
+    document.getElementById("rawDetailTitle").textContent = "老人每日任务表：" + date + " / " + (fullGroup.elderName || group.elderId || "-");
+    tableEl.innerHTML = renderTaskGroupDetailTable(fullGroup);
+  }).catch(function(err){
+    tableEl.innerHTML = '<div class="empty-state">加载失败：' + escHtml(err.message || "未知错误") + '</div>';
+  });
+}
+
+document.getElementById("rawDetailTableContent").addEventListener("click", function(e){
+  var previewCard = e.target.closest("[data-action='raw-evidence-preview']");
+  if (previewCard) {
+    e.preventDefault();
+    e.stopPropagation();
+    document.getElementById("rawDetailTableContent").innerHTML = renderLargeEvidenceImage(previewCard.dataset.url || "", previewCard.dataset.title || "");
+    return;
+  }
+  var backBtn = e.target.closest("[data-action='raw-evidence-back']");
+  if (backBtn) {
+    e.preventDefault();
+    e.stopPropagation();
+    document.getElementById("rawDetailTableContent").innerHTML = S.rawEvidenceDetailHtml || '<div class="empty-state">图片列表已失效，请重新打开图片记录</div>';
+    return;
+  }
+  var evidenceBtn = e.target.closest("[data-action='raw-task-evidence']");
+  if (!evidenceBtn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  openTaskEvidence(evidenceBtn.dataset.taskId || "");
+});
+
+document.getElementById("rawDataTable").addEventListener("click", function(e){
+  var btn = e.target.closest("[data-action='raw-detail']");
+  var templateBtn = e.target.closest("[data-action='raw-template-detail']");
+  var taskBtn = e.target.closest("[data-action='raw-task-detail']");
+  var taskGroupBtn = e.target.closest("[data-action='raw-task-group-detail']");
+  var caregiverRecordGroupBtn = e.target.closest("[data-action='raw-caregiver-record-group-detail']");
+  var anomalyGroupBtn = e.target.closest("[data-action='raw-anomaly-group-detail']");
+  var attendanceGroupBtn = e.target.closest("[data-action='raw-attendance-detail']");
+  var caregiverDetailBtn = e.target.closest("[data-action='raw-caregiver-detail']");
+  var elderTimelineBtn = e.target.closest("[data-action='raw-elder-timeline']");
+  var evidenceBtn = e.target.closest("[data-action='raw-task-evidence']");
+  if (!btn && !templateBtn && !taskBtn && !taskGroupBtn && !caregiverRecordGroupBtn && !anomalyGroupBtn && !attendanceGroupBtn && !caregiverDetailBtn && !elderTimelineBtn && !evidenceBtn) return;
+  if (evidenceBtn) {
+    openTaskEvidence(evidenceBtn.dataset.taskId || "");
+    return;
+  }
+  if (elderTimelineBtn) {
+    openElderTaskTimeline(S.rawElderRows[Number(elderTimelineBtn.dataset.index)] || {});
+    return;
+  }
+  var row = S.rawRows[Number((btn || templateBtn || taskBtn || taskGroupBtn || caregiverRecordGroupBtn || anomalyGroupBtn || attendanceGroupBtn || caregiverDetailBtn).dataset.index)];
+  document.getElementById("rawDetailTitle").textContent = rawTableLabel(S.rawTable) + " 数据详情";
+  var jsonEl = document.getElementById("rawDetailContent");
+  var tableEl = document.getElementById("rawDetailTableContent");
+  if (taskGroupBtn) {
+    var group = S.rawTaskGroups[Number(taskGroupBtn.dataset.index)] || { rows: [] };
+    openTaskGroupDetail(group);
+  } else if (caregiverRecordGroupBtn) {
+    var recordGroup = S.rawCaregiverRecordGroups[Number(caregiverRecordGroupBtn.dataset.index)] || { rows: [] };
+    document.getElementById("rawDetailTitle").textContent = "护工每日任务记录表：" + (recordGroup.date || "-") + " / " + (recordGroup.caregiverName || "未分配");
+    jsonEl.style.display = "none";
+    tableEl.style.display = "";
+    tableEl.innerHTML = renderCaregiverRecordGroupDetailTable(recordGroup);
+  } else if (anomalyGroupBtn) {
+    var anomalyGroup = S.rawAnomalyGroups[Number(anomalyGroupBtn.dataset.index)] || { rows: [] };
+    document.getElementById("rawDetailTitle").textContent = "老人异常汇总：" + (anomalyGroup.elderName || "未知老人");
+    jsonEl.style.display = "none";
+    tableEl.style.display = "";
+    tableEl.innerHTML = renderAnomalyGroupDetailTable(anomalyGroup);
+  } else if (attendanceGroupBtn) {
+    var attendanceGroup = S.rawAttendanceGroups[Number(attendanceGroupBtn.dataset.index)] || null;
+    document.getElementById("rawDetailTitle").textContent = "护工考勤表：" + ((attendanceGroup && attendanceGroup.recordDate) || "-") + " / " + ((attendanceGroup && attendanceGroup.caregiverName) || "未知护工");
+    jsonEl.style.display = "none";
+    tableEl.style.display = "";
+    tableEl.innerHTML = renderAttendanceGroupDetailTable(attendanceGroup);
+  } else if (caregiverDetailBtn) {
+    document.getElementById("rawDetailTitle").textContent = "护工档案详情：" + ((row && row.name) || "-");
+    jsonEl.style.display = "none";
+    tableEl.style.display = "";
+    tableEl.innerHTML = renderCaregiverDetailTable(row || {});
+  } else if (taskBtn) {
+    document.getElementById("rawDetailTitle").textContent = "任务记录：" + (row.title || row.id || "");
+    jsonEl.style.display = "none";
+    tableEl.style.display = "";
+    tableEl.innerHTML = renderTaskDetailTable(row || {});
+  } else if (templateBtn) {
+    var template = getReportTemplatePayload(row);
+    var itemCount = countReportTemplateItems(template);
+    var templateType = getReportTemplateType(row);
+    var baseId = getReportTemplateBaseId(row);
+    document.getElementById("rawDetailTitle").textContent = "日报模板内容：" + (row.title || template.title || row.id || "");
+    jsonEl.style.display = "none";
+    tableEl.style.display = "";
+    tableEl.innerHTML =
+      '<div style="margin-bottom:12px" class="template-summary">' +
+        '<span>' + escHtml(classifyReportTemplate(row)) + '</span>' +
+        '<span>' + (templateType === "base" ? "基础模板：只供导入" : "父基础模板：" + escHtml(baseId || "未关联")) + '</span>' +
+        '<span>机构：' + escHtml(row.institution_id || "-") + '</span>' +
+        '<span>版本：v' + escHtml(row.version || template.version || 1) + '</span>' +
+        '<span>' + ((template.sections || []).length) + ' 个栏目</span>' +
+        '<span>' + itemCount + ' 个子项</span>' +
+      '</div>' +
+      (template.description ? '<p style="margin-bottom:12px;color:var(--text-secondary)">' + escHtml(template.description) + '</p>' : '') +
+      renderReportTemplateRowsTable(template);
+  } else {
+    tableEl.style.display = "none";
+    jsonEl.style.display = "";
+    jsonEl.textContent = JSON.stringify(row || {}, null, 2);
+  }
+  showModal("modalRawDetail");
 });
 
 // Refresh / Cleanup sessions

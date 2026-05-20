@@ -18,13 +18,13 @@ export function renderProfilePage({ state }) {
           ${renderIcon("caretRight")}
         </button>
 
-        <div class="profile-menu__item">
+        <button class="profile-menu__item" data-action="navigate" data-route="attendance">
           <span class="profile-menu__label">
             ${renderIcon("note")}
             <strong>我的考勤</strong>
           </span>
           ${renderIcon("caretRight")}
-        </div>
+        </button>
 
         <div class="profile-menu__item">
           <span class="profile-menu__label">

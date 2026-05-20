@@ -8,27 +8,34 @@
 import {
   createAnomaly,
   createAuthUser,
-  createTaskCompletion,
+  createInventoryUsage,
   disableAuthUser,
+  assignElderCaregiver,
   fetchAnomalies,
+  fetchAttendanceRecords,
   fetchAuthUsers,
-  fetchCareRecords,
+  fetchCaregiverTaskRecords,
   fetchCaregivers,
   fetchDailyReportTemplate,
   fetchDailyReportTemplates,
+  fetchElders,
   fetchInstitution,
-  fetchInstitutionState,
+  fetchInventoryItems,
+  fetchInventoryUsages,
   fetchLatestAppRelease,
   fetchPublishedTasks,
+  fetchSyncStatus,
+  updateCaregiver as updateCloudCaregiver,
+  updateAuthUser,
+  updateElder as updateCloudElder,
   getAuthToken,
   getCloudApiConfig,
   isCloudSyncConfigured,
   requestJson,
   setAuthToken,
-  updateAnomaly,
-  uploadCareRecord,
+  upsertAttendanceRecord,
+  upsertInventoryItem,
   uploadDailyReportTemplate,
-  uploadInstitutionState,
   uploadPublishedTask,
   uploadPublishedTasksBulk,
 } from "../utils/cloudApi.js";
@@ -45,14 +52,16 @@ const DIRECTOR_AUDIT_PROJECTS = [
   { key: "exception", label: "异常" },
 ];
 
-const DEFAULT_REPORT_TEMPLATE_IMPORT_INSTITUTIONS = [
-  { id: "demo-qinghe-care", name: "青禾镇颐养护理院" },
-  { id: "inst-001", name: "福乐镇智慧养老院" },
-  { id: "sanxiang-songfeng", name: "湘潭县三湘松风园老年公寓" },
-  { id: "zhuzhou-demo", name: "株洲示范养老院" },
-];
-
 let directorCareReportsRequestInFlight = false;
+let caregiverCareReportsRequestInFlight = false;
+const taskEvidenceRequestsInFlight = new Set();
+let institutionStateRefreshInFlight = null;
+const syncDomainVersions = {};
+const DEFAULT_SHIFT_TEMPLATES = [
+  { id: "morning", name: "早班", start: "07:00", end: "15:00" },
+  { id: "afternoon", name: "午班", start: "15:00", end: "23:00" },
+  { id: "night", name: "晚班", start: "23:00", end: "07:00" },
+];
 
 export function notify() {
   if (state._holdNotify) return;
@@ -76,8 +85,29 @@ function formatNowTime() {
   }).format(new Date());
 }
 
+function nowBeijingIso() {
+  const parts = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date()).replace(" ", "T");
+  return `${parts}+08:00`;
+}
+
 function formatNowDate() {
-  return new Intl.DateTimeFormat("sv-SE").format(new Date());
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai" }).format(new Date());
+}
+
+function getCaregiverRecordDate(options = {}) {
+  if (options.recordDate) return options.recordDate;
+  const uiDate = state.ui?.caregiverTaskRecordDate || "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(uiDate))) return uiDate;
+  return formatNowDate();
 }
 
 function shiftDate(dateString, offsetDays) {
@@ -153,6 +183,94 @@ function createAttendanceVerificationState(overrides = {}) {
   };
 }
 
+function normalizeInventoryItem(item = {}) {
+  const quantity = Number(item.quantity ?? item.stock ?? 0);
+  const warningQuantity = Number(item.warningQuantity ?? item.warning_quantity ?? item.limit ?? 0);
+  return {
+    id: item.id || `inventory-${Date.now()}`,
+    institutionId: item.institutionId || item.institution_id || state.institution.id,
+    name: String(item.name || "").trim(),
+    category: item.category || item.type || "消耗品",
+    unit: item.unit || "件",
+    quantity: Number.isFinite(quantity) ? Math.max(0, quantity) : 0,
+    warningQuantity: Number.isFinite(warningQuantity) ? Math.max(0, warningQuantity) : 0,
+    location: item.location || "",
+    status: item.status || "active",
+    updatedAt: item.updatedAt || item.updated_at || "",
+  };
+}
+
+function normalizeInventoryUsage(item = {}) {
+  return {
+    id: item.id || `inventory-usage-${Date.now()}`,
+    institutionId: item.institutionId || item.institution_id || state.institution.id,
+    itemId: item.itemId || item.item_id || "",
+    itemName: item.itemName || item.item_name || "",
+    quantity: Math.max(0, Number(item.quantity || 0)),
+    unit: item.unit || "件",
+    caregiverId: item.caregiverId || item.caregiver_id || "",
+    caregiverName: item.caregiverName || item.caregiver_name || "",
+    note: item.note || "",
+    usedAt: item.usedAt || item.used_at || item.createdAt || item.created_at || "",
+    createdAt: item.createdAt || item.created_at || "",
+  };
+}
+
+function mergeInventoryItems(items = []) {
+  state.inventory = Array.isArray(state.inventory) ? state.inventory : [];
+  items.map(normalizeInventoryItem).filter((item) => item.id && item.name).forEach((item) => {
+    const index = state.inventory.findIndex((existing) => existing.id === item.id);
+    if (index >= 0) {
+      state.inventory.splice(index, 1, item);
+    } else {
+      state.inventory.unshift(item);
+    }
+  });
+  state.inventory.sort((left, right) => {
+    const warningDiff = Number(left.quantity <= left.warningQuantity) - Number(right.quantity <= right.warningQuantity);
+    if (warningDiff) return warningDiff;
+    return (left.name || "").localeCompare(right.name || "");
+  });
+  state.director.inventory = state.inventory;
+  state.director.inventoryCategories = ["全部", ...Array.from(new Set(state.inventory.map((item) => item.category).filter(Boolean)))];
+  state.director.inventorySummary = {
+    types: state.inventory.filter((item) => item.status !== "deleted").length,
+    warningCount: state.inventory.filter((item) => item.status !== "deleted" && item.quantity <= item.warningQuantity).length,
+  };
+}
+
+function replaceInventoryItems(items = []) {
+  state.inventory = items.map(normalizeInventoryItem).filter((item) => item.id && item.name);
+  state.inventory.sort((left, right) => {
+    const warningDiff = Number(left.quantity <= left.warningQuantity) - Number(right.quantity <= right.warningQuantity);
+    if (warningDiff) return warningDiff;
+    return (left.name || "").localeCompare(right.name || "");
+  });
+  state.director.inventory = state.inventory;
+  state.director.inventoryCategories = ["全部", ...Array.from(new Set(state.inventory.map((item) => item.category).filter(Boolean)))];
+  state.director.inventorySummary = {
+    types: state.inventory.filter((item) => item.status !== "deleted").length,
+    warningCount: state.inventory.filter((item) => item.status !== "deleted" && item.quantity <= item.warningQuantity).length,
+  };
+}
+
+function mergeInventoryUsages(items = []) {
+  state.inventoryUsages = Array.isArray(state.inventoryUsages) ? state.inventoryUsages : [];
+  items.map(normalizeInventoryUsage).filter((item) => item.id && item.itemId).forEach((item) => {
+    const index = state.inventoryUsages.findIndex((existing) => existing.id === item.id);
+    if (index >= 0) {
+      state.inventoryUsages.splice(index, 1, item);
+    } else {
+      state.inventoryUsages.unshift(item);
+    }
+  });
+  state.inventoryUsages.sort((left, right) => String(right.usedAt || "").localeCompare(String(left.usedAt || "")));
+}
+
+function getInventoryItemById(itemId) {
+  return (state.inventory || []).find((item) => item.id === itemId);
+}
+
 function normalizeClockInLocation(location = {}) {
   const latitude = Number(location.latitude);
   const longitude = Number(location.longitude);
@@ -213,6 +331,120 @@ function summarizeCareRecordDraft(record = {}) {
   };
 }
 
+function getTaskEvidenceList(task = {}) {
+  return [
+    ...normalizeEvidenceList(task.recordEvidence),
+    ...normalizeEvidenceList(task.exceptionEvidence),
+  ];
+}
+
+function getTaskRecordText(task = {}) {
+  return String(task.recordNote || task.exceptionNote || "").trim();
+}
+
+function hasCaregiverTaskOperation(task = {}) {
+  return Boolean(
+    task.status === "completed" ||
+      task.status === "risk" ||
+      task.status === "refused" ||
+      task.completedAt ||
+      task.exceptionReportedAt ||
+      getTaskRecordText(task) ||
+      getTaskEvidenceList(task).length ||
+      Number(task.recordEvidenceCount || 0) ||
+      Number(task.exceptionEvidenceCount || 0),
+  );
+}
+
+function createAutoReportItemsFromTasks(tasks = [], template = Object.values(state.dailyReportTemplates || {})[0]) {
+  const nextItems = createReportTemplateItems(template);
+  const taskText = tasks
+    .filter((task) => ["completed", "risk", "refused"].includes(task.status))
+    .map((task) => `${task.title || ""} ${task.category || ""}`)
+    .join(" ");
+
+  (template?.sections || []).forEach((section) => {
+    (section.items || []).forEach((item) => {
+      const label = String(item.label || "").trim();
+      if (!label) return;
+      nextItems[item.id] = taskText.includes(label) || tasks.some((task) => label.includes(task.title || ""));
+    });
+  });
+
+  return nextItems;
+}
+
+function createAutoCareRecordFromTimeline(elder, tasks = [], recordDate = formatNowDate(), existingRecord = null) {
+  const operatedTasks = tasks.filter(hasCaregiverTaskOperation);
+  const template = existingRecord?.reportTemplateSnapshot || Object.values(state.dailyReportTemplates || {})[0];
+  const completedTasks = operatedTasks.filter((task) => task.status === "completed");
+  const issueTasks = operatedTasks.filter((task) => task.status === "risk" || task.status === "refused");
+  const evidence = operatedTasks.flatMap(getTaskEvidenceList);
+  const notes = operatedTasks.map(getTaskRecordText).filter(Boolean);
+  const reportItems = createAutoReportItemsFromTasks(operatedTasks, template);
+  const nowTime = formatNowTime();
+  const healthOther = issueTasks.map((task) => `${task.schedule || ""} ${task.title || ""} ${getTaskRecordText(task)}`.trim()).join("；");
+  const treatment = issueTasks.length
+    ? issueTasks.map((task) => getTaskRecordText(task) || `${task.title || "护理任务"}已记录异常`).join("；")
+    : "";
+
+  return cloneCareRecordDraft({
+    ...(existingRecord || {}),
+    id: existingRecord?.id || createCareReportId(elder.id, recordDate),
+    institutionName: state.institution.name,
+    elderId: elder.id,
+    elderName: elder.name,
+    gender: elder.gender || "",
+    age: elder.age || "",
+    room: elder.room || "",
+    bed: elder.bed || "",
+    careType: elder.careType || "semi-care",
+    careLevelLabel: elder.level || "",
+    recordDate,
+    recordTime: nowTime,
+    caregiverId: state.caregiver.id,
+    caregiverName: state.caregiver.name,
+    reviewerName: existingRecord?.reviewerName || "",
+    reportTemplateSnapshot: template,
+    reportItems,
+    dailyCare: {
+      ...(existingRecord?.dailyCare || {}),
+      timelineCompleted: completedTasks.length > 0,
+    },
+    medication: existingRecord?.medication || {},
+    health: {
+      ...(existingRecord?.health || {}),
+      none: issueTasks.length === 0,
+      other: healthOther,
+      treatment,
+    },
+    inventory: existingRecord?.inventory || {},
+    signatures: {
+      ...(existingRecord?.signatures || {}),
+      caregiverSign: state.caregiver.name || "",
+      remark: [
+        `自动同步 ${operatedTasks.length} 项已操作任务卡，已完成 ${completedTasks.length} 项，异常 ${issueTasks.length} 项。`,
+        notes.length ? `文字记录：${notes.join("；")}` : "",
+        evidence.length ? `照片留痕：${evidence.length} 张。` : "",
+      ].filter(Boolean).join("\n"),
+    },
+    timelineTaskSnapshot: operatedTasks.map((task) => ({
+      taskId: task.id,
+      title: task.title || "",
+      schedule: task.schedule || "",
+      status: task.status || "",
+      note: getTaskRecordText(task),
+      evidenceCount: getTaskEvidenceList(task).length + Number(task.recordEvidenceCount || 0) + Number(task.exceptionEvidenceCount || 0),
+      evidence: getTaskEvidenceList(task),
+      completedAt: task.completedAt || "",
+      exceptionReportedAt: task.exceptionReportedAt || "",
+    })),
+    source: "caregiver-auto-timeline",
+    syncStatus: existingRecord?.syncStatus || "local-draft",
+    workflowStatus: existingRecord?.workflowStatus || "draft",
+  });
+}
+
 function normalizeDailyReportTemplate(template = {}) {
   const fallback = Object.values(state.dailyReportTemplates || {})[0] || { id: "daily-report-basic", version: 1, title: "护理记录日报模板", sections: [] };
   const candidateCareLevel = template.careLevel || fallback.careLevel || "all";
@@ -222,6 +454,8 @@ function normalizeDailyReportTemplate(template = {}) {
     title: String(template.title || fallback.title || "护理记录日报模板").trim(),
     description: String(template.description || fallback.description || "").trim(),
     careLevel: candidateCareLevel === "all" || CARE_LEVEL_OPTIONS.includes(candidateCareLevel) ? candidateCareLevel : "all",
+    templateType: template.templateType || template.kind || fallback.templateType || "instance",
+    baseTemplateId: template.baseTemplateId || fallback.baseTemplateId || "",
     updatedAt: template.updatedAt || "",
     sections: [],
   };
@@ -281,22 +515,16 @@ function normalizeCloudDailyReportTemplate(template = {}) {
 
 function buildReportTemplateImportView() {
   const importState = state.ui.directorReportTemplateImportCatalog || {};
-  const cloudItems = (importState.items || []).map(normalizeCloudDailyReportTemplate).filter((item) => item.sections.length);
+  const cloudItems = (importState.items || [])
+    .map(normalizeCloudDailyReportTemplate)
+    .filter((item) => item.sections.length && (item.templateType || "base") === "base");
   const institutions = new Map();
 
-  DEFAULT_REPORT_TEMPLATE_IMPORT_INSTITUTIONS.forEach((institution) => {
-    institutions.set(institution.id, { ...institution });
-  });
-  institutions.set(state.institution.id, {
-    id: state.institution.id,
-    name: state.institution.name || state.institution.id,
-  });
   (importState.institutions || []).forEach((institution) => {
     if (!institution?.id) return;
-    const existingName = institutions.get(institution.id)?.name;
     institutions.set(institution.id, {
       id: institution.id,
-      name: institution.name && institution.name !== institution.id ? institution.name : existingName || institution.id,
+      name: institution.name && institution.name !== institution.id ? institution.name : institution.id,
     });
   });
   cloudItems.forEach((item) => {
@@ -306,9 +534,20 @@ function buildReportTemplateImportView() {
       name: item.institutionName || institutions.get(item.institutionId)?.name || item.institutionId,
     });
   });
+  if (!institutions.size && state.institution.id) {
+    institutions.set(state.institution.id, {
+      id: state.institution.id,
+      name: state.institution.name || state.institution.id,
+    });
+  }
 
-  const selectedInstitutionId =
-    state.ui.directorReportTemplateImportInstitutionId || state.institution.id || DEFAULT_REPORT_TEMPLATE_IMPORT_INSTITUTIONS[0].id;
+  const requestedInstitutionId = state.ui.directorReportTemplateImportInstitutionId || state.institution.id || "";
+  const institutionIdsWithTemplates = new Set(cloudItems.map((item) => item.institutionId).filter(Boolean));
+  const selectedInstitutionId = institutionIdsWithTemplates.has(requestedInstitutionId)
+    ? requestedInstitutionId
+    : institutionIdsWithTemplates.has(state.institution.id)
+      ? state.institution.id
+      : Array.from(institutions.keys())[0] || requestedInstitutionId;
   const templates = cloudItems.filter((item) => item.institutionId === selectedInstitutionId);
   const selectedTemplateId =
     state.ui.directorReportTemplateImportTemplateId ||
@@ -334,6 +573,20 @@ function buildReportTemplateImportView() {
 function createDailyReportTemplateDraft(template) {
   const source = template || Object.values(state.dailyReportTemplates || {})[0] || { id: "daily-report-basic", version: 1, title: "护理记录日报模板", sections: [] };
   return normalizeDailyReportTemplate(JSON.parse(JSON.stringify(source)));
+}
+
+function createBlankDailyReportTemplateDraft() {
+  return {
+    id: `daily-report-${state.institution.id || "institution"}-${Date.now()}`,
+    version: 1,
+    title: "",
+    description: "",
+    careLevel: "all",
+    templateType: "instance",
+    baseTemplateId: "",
+    sections: [],
+    updatedAt: "",
+  };
 }
 
 function createReportTemplateSectionId(title = "") {
@@ -501,6 +754,103 @@ function normalizeCloudCareRecord(record = {}) {
   return normalized;
 }
 
+function taskRecordOperationIsIssue(record = {}) {
+  return ["task_exception", "quick_exception"].includes(String(record.operationType || ""));
+}
+
+function buildCareReportFromTaskRecordGroup(group = {}) {
+  const records = Array.isArray(group.records) ? group.records : [];
+  const first = records[0] || {};
+  const elder = getElderById(group.elderId || first.elderId);
+  const caregiver = getCaregiverById(group.caregiverId || first.caregiverId);
+  const recordDate = group.recordDate || first.recordDate || formatNowDate();
+  const issueRecords = records.filter(taskRecordOperationIsIssue);
+  const noteRecords = records.filter((item) => String(item.note || "").trim());
+  const photoCount = records.reduce((sum, item) => sum + Number(item.photoCount || 0), 0);
+  const taskCount = new Set(records.map((item) => item.taskId || item.sourceId || item.id).filter(Boolean)).size;
+  const latestTime = records
+    .map((item) => item.operationTime || "")
+    .filter(Boolean)
+    .sort()
+    .pop() || "";
+
+  return cloneCareRecordDraft({
+    id: `caregiver-task-record-${group.elderId || first.elderId || "unknown"}-${group.caregiverId || first.caregiverId || "unknown"}-${recordDate}`,
+    institutionName: state.institution.name,
+    elderId: group.elderId || first.elderId || "",
+    elderName: elder?.name || group.elderName || first.elderName || "",
+    gender: elder?.gender || "",
+    age: elder?.age || "",
+    room: elder?.room || first.elderRoom || "",
+    bed: elder?.bed || first.elderBed || "",
+    careType: elder?.careType || "semi-care",
+    careLevelLabel: elder?.level || "",
+    recordDate,
+    recordTime: String(latestTime || "").slice(11, 16) || formatNowTime(),
+    caregiverId: group.caregiverId || first.caregiverId || "",
+    caregiverName: caregiver?.name || group.caregiverName || first.caregiverName || "",
+    reviewerName: "",
+    reportTemplateSnapshot: Object.values(state.dailyReportTemplates || {})[0],
+    reportItems: {},
+    dailyCare: {
+      timelineCompleted: records.some((item) => item.operationType === "check"),
+    },
+    medication: {},
+    health: {
+      none: issueRecords.length === 0,
+      other: issueRecords.map((item) => [item.taskTitle, item.note].filter(Boolean).join("：")).filter(Boolean).join("；"),
+      treatment: issueRecords.map((item) => item.note || item.taskTitle || item.operationLabel).filter(Boolean).join("；"),
+    },
+    inventory: {},
+    signatures: {
+      caregiverSign: caregiver?.name || group.caregiverName || first.caregiverName || "",
+      reviewerSign: "",
+      remark: [
+        `云端护工任务记录：${taskCount} 个任务卡操作。`,
+        noteRecords.length ? `文字记录：${noteRecords.map((item) => item.note).join("；")}` : "",
+        photoCount ? `图片记录：${photoCount} 张。` : "",
+        issueRecords.length ? `异常记录：${issueRecords.length} 条。` : "",
+      ].filter(Boolean).join("\n"),
+    },
+    timelineTaskSnapshot: records.map((item) => ({
+      taskId: item.taskId || "",
+      title: item.taskTitle || item.operationLabel || "",
+      schedule: String(item.operationTime || "").slice(11, 16),
+      status: item.taskStatus || "",
+      note: item.note || "",
+      evidenceCount: Number(item.photoCount || 0),
+      evidence: Array.isArray(item.photos) ? item.photos : [],
+      completedAt: item.operationType === "check" ? item.operationTime || "" : "",
+      exceptionReportedAt: taskRecordOperationIsIssue(item) ? item.operationTime || "" : "",
+    })),
+    source: "caregiver-task-records",
+    syncStatus: "synced",
+    workflowStatus: "submitted",
+    updatedAt: latestTime || `${formatNowDate()} ${formatNowTime()}`,
+    submittedAt: latestTime || "",
+  });
+}
+
+function groupTaskRecordsAsCareReports(records = []) {
+  const groups = new Map();
+  records.forEach((record) => {
+    const key = [record.recordDate || "", record.elderId || "", record.caregiverId || ""].join("|");
+    if (!groups.has(key)) {
+      groups.set(key, {
+        recordDate: record.recordDate || "",
+        elderId: record.elderId || "",
+        elderName: record.elderName || "",
+        caregiverId: record.caregiverId || "",
+        caregiverName: record.caregiverName || "",
+        records: [],
+      });
+    }
+    groups.get(key).records.push(record);
+  });
+
+  return Array.from(groups.values()).map((group) => buildCareReportFromTaskRecordGroup(group));
+}
+
 function mergeCloudCareRecord(record = {}, opts = {}) {
   const normalized = normalizeCloudCareRecord(record);
   const cloudIndex = state.cloud.careReports.findIndex((item) => item.id === normalized.id);
@@ -533,12 +883,26 @@ function serializeCloudTask(task = {}, sourceApp = task.sourceApp || "director-a
   const caregiver = getCaregiverById(task.caregiverId);
   const defaultCaregiver = getCaregiverById(task.defaultCaregiverId);
   const timestamp = `${formatNowDate()} ${formatNowTime()}`;
+  const hasExceptionDetail = Boolean(
+    task.exceptionNote ||
+      task.exceptionType ||
+      task.exception ||
+      task.exceptionReportedAt ||
+      evidenceArray(task.exceptionEvidence).length,
+  );
+  const requestedStatus = task.status || "pending";
+  const status =
+    sourceApp === "director-app" || (["risk", "refused"].includes(requestedStatus) && !hasExceptionDetail)
+      ? ["risk", "refused"].includes(requestedStatus)
+        ? "pending"
+        : requestedStatus
+      : requestedStatus;
 
   return {
     taskId: task.id,
     institutionId: state.institution.id,
     institutionName: state.institution.name,
-    recordDate: state.director.date || task.recordDate || "",
+    recordDate: task.recordDate || state.director.date || "",
     elderId: task.elderId || "",
     elderName: elder?.name || task.elderName || "",
     elderRoom: elder?.room || task.elderRoom || "",
@@ -555,11 +919,16 @@ function serializeCloudTask(task = {}, sourceApp = task.sourceApp || "director-a
     schedule: task.schedule || "即时",
     window: task.window || task.schedule || "即时",
     requirePhoto: Boolean(task.requirePhoto),
-    status: task.status || "pending",
-    note: task.exceptionNote || task.note || "",
+    status,
+    note: status === "risk" || status === "refused" ? task.exceptionNote || task.note || "" : task.note || "",
+    completedAt: task.completedAt || "",
+    recordNote: task.recordNote || "",
+    recordedAt: task.recordUpdatedAt || task.recordedAt || "",
     exceptionNote: task.exceptionNote || "",
     exceptionType: task.exceptionType || "",
-    recordEvidence: task.recordEvidence || [],
+    recordEvidence: normalizeEvidenceList(task.recordEvidence),
+    exceptionEvidence: normalizeEvidenceList(task.exceptionEvidence),
+    exceptionReportedAt: task.exceptionReportedAt || (hasExceptionDetail ? timestamp : ""),
     category: task.category || "",
     templateGroup: task.templateGroup || "special",
     source: task.source || "manual",
@@ -580,35 +949,48 @@ function normalizeCloudTask(task = {}) {
 
   return {
     id: taskId,
-    planId: task.planId || "",
-    planItemId: task.planItemId || "",
-    elderId: task.elderId || "",
-    caregiverId: task.caregiverId || "",
-    defaultCaregiverId: task.defaultCaregiverId || "",
-    templateId: task.templateId || "",
+    recordDate: task.recordDate || task.record_date || "",
+    planId: task.planId || task.plan_id || "",
+    planItemId: task.planItemId || task.plan_item_id || "",
+    elderId: task.elderId || task.elder_id || "",
+    elderName: task.elderName || task.elder_name || "",
+    elderRoom: task.elderRoom || task.elder_room || "",
+    elderBed: task.elderBed || task.elder_bed || "",
+    elderFloor: normalizeFloorNumber(task.elderFloor || task.elder_floor, 0) || "",
+    caregiverId: task.caregiverId || task.caregiver_id || "",
+    defaultCaregiverId: task.defaultCaregiverId || task.default_caregiver_id || "",
+    templateId: task.templateId || task.template_id || "",
     title: task.title || "院长发布任务",
     schedule: task.schedule || task.window || "即时",
     window: task.window || task.schedule || "即时",
-    requirePhoto: Boolean(task.requirePhoto),
+    requirePhoto: Boolean(task.requirePhoto || task.require_photo),
     status: task.status || "pending",
     note: task.note || "",
-    exceptionNote: task.exceptionNote || "",
-    exceptionType: task.exceptionType || "",
-    exceptionEvidence: task.exceptionEvidence || null,
-    exceptionReportedAt: task.exceptionReportedAt || "",
-    recordNote: task.recordNote || "",
-    recordEvidence: task.recordEvidence || null,
+    exceptionNote: task.exceptionNote || task.exception_note || "",
+    exceptionType: task.exceptionType || task.exception_type || "",
+    exceptionEvidence: task.exceptionEvidence || task.exception_evidence || null,
+    exceptionEvidenceCount: Number(task.exceptionEvidenceCount || task.exception_evidence_count || 0),
+    exceptionReportedAt: task.exceptionReportedAt || task.exception_reported_at || "",
+    recordNote: task.recordNote || task.record_note || "",
+    recordEvidence: task.recordEvidence || task.record_evidence || null,
+    recordEvidenceCount: Number(task.recordEvidenceCount || task.record_evidence_count || 0),
+    recordedAt: task.recordedAt || task.recorded_at || "",
+    completedAt: task.completedAt || task.completed_at || "",
+    caregiverName: task.caregiverName || task.caregiver_name || "",
+    defaultCaregiverName: task.defaultCaregiverName || task.default_caregiver_name || "",
     category: task.category || "",
-    templateGroup: task.templateGroup || "special",
+    templateGroup: task.templateGroup || task.template_group || "special",
     source: task.source || "manual",
-    assignmentMode: task.assignmentMode || "manual",
-    assignmentStatus: task.assignmentStatus || "published",
+    sourceApp: task.sourceApp || task.source_app || "",
+    assignmentMode: task.assignmentMode || task.assignment_mode || "manual",
+    assignmentStatus: task.assignmentStatus || task.assignment_status || "published",
+    workflowStatus: task.workflowStatus || task.workflow_status || "published",
     description: task.description || task.note || "",
-    publishedAt: task.publishedAt || task.updatedAt || "",
-    acceptedAt: task.acceptedAt || task.publishedAt || task.updatedAt || "",
+    publishedAt: task.publishedAt || task.published_at || task.updatedAt || task.updated_at || "",
+    acceptedAt: task.acceptedAt || task.accepted_at || task.publishedAt || task.published_at || task.updatedAt || task.updated_at || "",
     planNote: task.planNote || "",
-    cloudTaskId: task.id || task.cloudTaskId || taskId,
-    updatedAt: task.updatedAt || "",
+    cloudTaskId: task.id || task.cloudTaskId || task.cloud_task_id || taskId,
+    updatedAt: task.updatedAt || task.updated_at || "",
   };
 }
 
@@ -626,15 +1008,26 @@ function mergeCloudTask(task = {}, opts = {}) {
     state.cloud.tasks.unshift(cloudItem);
   }
 
-  const taskIndex = state.tasks.findIndex(
-    (item) => item.id === normalized.id || (normalized.planItemId && item.planItemId === normalized.planItemId),
-  );
+  const taskIndex = state.tasks.findIndex((item) => {
+    if (item.id === normalized.id || item.cloudTaskId === normalized.id) return true;
+    if (normalized.cloudTaskId && (item.id === normalized.cloudTaskId || item.cloudTaskId === normalized.cloudTaskId)) return true;
+    if (!normalized.planItemId || item.planItemId !== normalized.planItemId) return false;
+    return (
+      item.elderId === normalized.elderId &&
+      item.caregiverId === normalized.caregiverId &&
+      (!item.recordDate || !normalized.recordDate || item.recordDate === normalized.recordDate)
+    );
+  });
 
   if (taskIndex >= 0) {
     const local = state.tasks[taskIndex];
     for (var _ek of ["recordEvidence", "exceptionEvidence"]) {
       var _locEv = local[_ek];
       var _cldEv = normalized[_ek];
+      if (!Array.isArray(_cldEv) && Array.isArray(_locEv)) {
+        normalized[_ek] = _locEv;
+        continue;
+      }
       if (Array.isArray(_locEv) && Array.isArray(_cldEv)) {
         for (var _i = 0; _i < _locEv.length && _i < _cldEv.length; _i++) {
           if (_locEv[_i] && _locEv[_i].dataUrl && _cldEv[_i] && !_cldEv[_i].dataUrl) {
@@ -653,6 +1046,51 @@ function mergeCloudTask(task = {}, opts = {}) {
 
   if (!opts.skipSort) state.tasks = sortTasksBySchedule(state.tasks);
   return normalized;
+}
+
+function getTaskSyncKeys(task = {}) {
+  return [
+    task.id,
+    task.taskId,
+    task.cloudTaskId,
+  ].filter(Boolean).map(String);
+}
+
+function taskMatchesSyncKeys(task = {}, keys = new Set()) {
+  return getTaskSyncKeys(task).some((key) => keys.has(key));
+}
+
+function evidenceArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function evidenceCount(task, keys) {
+  return keys.reduce((total, key) => total + Number(task?.[key] || 0), 0);
+}
+
+function taskNeedsEvidenceHydration(task = {}) {
+  if (task.status !== "risk" && task.status !== "refused") return false;
+  const visibleEvidence = [
+    ...evidenceArray(task.recordEvidence),
+    ...evidenceArray(task.exceptionEvidence),
+  ];
+  if (visibleEvidence.some((item) => item && !item.dataUrl)) return true;
+  const localEvidenceCount =
+    evidenceArray(task.recordEvidence).length + evidenceArray(task.exceptionEvidence).length;
+  const cloudEvidenceCount = evidenceCount(task, ["recordEvidenceCount", "exceptionEvidenceCount"]);
+  return cloudEvidenceCount > localEvidenceCount;
+}
+
+function hydrateMissingDirectorExceptionEvidence(items = []) {
+  const ids = [];
+  items.forEach((item) => {
+    const taskId = item?.taskId || item?.id || "";
+    if (!taskId || !taskNeedsEvidenceHydration(item)) return;
+    const local = state.tasks.find((task) => task.id === taskId || task.cloudTaskId === taskId);
+    if (local && !taskNeedsEvidenceHydration(local)) return;
+    ids.push(taskId);
+  });
+  ids.forEach((taskId) => actions.loadTaskEvidence(taskId));
 }
 
 function syncPendingElderTasksToCaregiver(elderId, caregiverId) {
@@ -736,8 +1174,31 @@ async function uploadSyncedElderTasks(tasks = []) {
   return { ok: true, count: syncedCount };
 }
 
+async function syncElderAssignmentToCloud(elderId, caregiverId) {
+  if (!elderId || !caregiverId || !isCloudSyncConfigured()) return { ok: true, count: 0 };
+  try {
+    const response = await assignElderCaregiver({
+      institutionId: state.institution.id,
+      elderId,
+      caregiverId,
+      recordDate: state.director.date || formatNowDate(),
+    });
+    const cloudTasks = Array.isArray(response?.tasks) ? response.tasks : [];
+    cloudTasks.forEach((cloudTask) => mergeCloudTask(cloudTask, { skipSort: true }));
+    state.tasks = sortTasksBySchedule(state.tasks);
+    setCloudTasksFetchedAt(response?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`);
+    setCloudTasksError("");
+    return { ok: true, count: Number(response?.item?.updatedTaskCount || cloudTasks.length || 0) };
+  } catch (error) {
+    setCloudTasksError(error?.message || "任务云端同步失败");
+    return { ok: false, count: 0 };
+  }
+}
+
 function buildInstitutionStateSnapshot() {
   const timestamp = `${formatNowDate()} ${formatNowTime()}`;
+  const recordDate = formatNowDate();
+  ensureAttendanceState();
   const temporaryTasks = state.tasks.filter(isTemporaryTask).map((task) => serializeCloudTask(task));
   const roomsByFloor = state.elders.reduce((result, elder) => {
     const floor = String(elder.floor || "");
@@ -763,13 +1224,15 @@ function buildInstitutionStateSnapshot() {
       elderCarePlans: JSON.parse(JSON.stringify(state.elderCarePlans || [])),
       dailyReports: JSON.parse(JSON.stringify(state.dailyReports || [])),
       temporaryTasks,
-      recordDate: state.director.date || formatNowDate(),
+      recordDate,
+      selectedRecordDate: recordDate,
       taskSignalVersion: state.taskSignalVersion || 0,
       updatedAt: timestamp,
     },
     personnelInfo: {
-      caregivers: JSON.parse(JSON.stringify(state.caregivers || [])),
-      elders: JSON.parse(JSON.stringify(state.elders || [])),
+      caregivers: filterSnapshotCaregiversForCurrentInstitution(dedupeCaregiverRecords(state.caregivers || [])),
+      elders: dedupeElderRecords(state.elders || []),
+      attendance: JSON.parse(JSON.stringify(state.attendance || {})),
       updatedAt: timestamp,
     },
     institutionInfo: {
@@ -801,6 +1264,434 @@ function normalizeInstitutionStateSnapshot(response = {}) {
   return null;
 }
 
+function normalizeFloorNumber(value, fallback = 1) {
+  const floor = Number.parseInt(value, 10);
+  return Number.isFinite(floor) && floor > 0 ? floor : fallback;
+}
+
+function normalizeCaregiverDedupeValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getCaregiverDedupeKeys(caregiver = {}) {
+  const keys = [];
+  const id = normalizeCaregiverDedupeValue(caregiver.id);
+  const employeeNo = normalizeCaregiverDedupeValue(caregiver.employeeNo || caregiver.employee_no);
+  const name = normalizeCaregiverDedupeValue(caregiver.name);
+  const floor = normalizeCaregiverDedupeValue(caregiver.floor);
+  const username = normalizeCaregiverDedupeValue(caregiver.username);
+  if (id) keys.push(`id:${id}`);
+  if (employeeNo) keys.push(`employee:${employeeNo}`);
+  if (username) keys.push(`username:${username}`);
+  if (name && floor) keys.push(`name-floor:${name}:${floor}`);
+  return keys;
+}
+
+function caregiverRecordScore(caregiver = {}) {
+  let score = 0;
+  const id = String(caregiver.id || "");
+  if (caregiver.cloudUserId) score += 100;
+  if (caregiver.username) score += 40;
+  if (id && !id.includes("-demo-")) score += 20;
+  if (caregiver.employeeNo || caregiver.employee_no) score += 10;
+  if (caregiver.status === "on-duty" || caregiver.status === "active") score += 5;
+  return score;
+}
+
+function mergeCaregiverRecords(primary = {}, fallback = {}) {
+  const merged = { ...fallback, ...primary };
+  Object.keys(fallback).forEach((key) => {
+    if (merged[key] === undefined || merged[key] === null || merged[key] === "") {
+      merged[key] = fallback[key];
+    }
+  });
+  merged.floor = normalizeFloorNumber(merged.floor, normalizeFloorNumber(fallback.floor, 1));
+  return merged;
+}
+
+function dedupeCaregiverRecords(caregivers = []) {
+  const result = [];
+  const keyToIndex = new Map();
+  caregivers.forEach((item) => {
+    if (!item || typeof item !== "object") return;
+    const record = JSON.parse(JSON.stringify(item));
+    record.floor = normalizeFloorNumber(record.floor, 1);
+    const keys = getCaregiverDedupeKeys(record);
+    const existingIndexes = keys.map((key) => keyToIndex.get(key)).filter((index) => index !== undefined);
+    const existingIndex = existingIndexes.length ? existingIndexes[0] : -1;
+    if (existingIndex < 0) {
+      const nextIndex = result.length;
+      result.push(record);
+      keys.forEach((key) => keyToIndex.set(key, nextIndex));
+      return;
+    }
+    const existing = result[existingIndex];
+    const preferred = caregiverRecordScore(record) > caregiverRecordScore(existing) ? record : existing;
+    const fallback = preferred === record ? existing : record;
+    result[existingIndex] = mergeCaregiverRecords(preferred, fallback);
+    getCaregiverDedupeKeys(result[existingIndex]).forEach((key) => keyToIndex.set(key, existingIndex));
+  });
+  return result;
+}
+
+function getAuthoritativeCloudCaregiverIds() {
+  const ids = new Set();
+  (state.caregivers || []).forEach((caregiver) => {
+    if (caregiver?.cloudUserId && caregiver?.id) ids.add(caregiver.id);
+  });
+  return ids;
+}
+
+function filterSnapshotCaregiversForCurrentInstitution(caregivers = []) {
+  const authoritativeIds = getAuthoritativeCloudCaregiverIds();
+  if (!authoritativeIds.size) return caregivers;
+  return caregivers.filter((caregiver) => authoritativeIds.has(caregiver?.id));
+}
+
+function normalizeElderDedupeValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function getElderDedupeKeys(elder = {}) {
+  const keys = [];
+  const id = normalizeElderDedupeValue(elder.id);
+  const room = normalizeElderDedupeValue(elder.room);
+  const bed = normalizeElderDedupeValue(elder.bed);
+  const name = normalizeElderDedupeValue(elder.name);
+  if (id) keys.push(`id:${id}`);
+  if (room && bed) keys.push(`room-bed:${room}:${bed}`);
+  if (name && room) keys.push(`name-room:${name}:${room}`);
+  return keys;
+}
+
+function elderRecordScore(elder = {}) {
+  let score = 0;
+  const id = String(elder.id || "");
+  const familyAccounts = Array.isArray(elder.familyAccounts) ? elder.familyAccounts : [];
+  if (familyAccounts.length) score += 100 + familyAccounts.length;
+  if (elder.familyUserId) score += 80;
+  if (elder.username) score += 30;
+  if (id && !id.includes("-demo-")) score += 20;
+  if (elder.assignedCaregiverId && !String(elder.assignedCaregiverId).includes("-demo-")) score += 10;
+  if (elder.room) score += 5;
+  return score;
+}
+
+function mergeElderRecords(primary = {}, fallback = {}) {
+  const merged = { ...fallback, ...primary };
+  Object.keys(fallback).forEach((key) => {
+    if (merged[key] === undefined || merged[key] === null || merged[key] === "") {
+      merged[key] = fallback[key];
+    }
+  });
+  merged.floor = normalizeFloorNumber(merged.floor, normalizeFloorNumber(fallback.floor, 1));
+  const accounts = [
+    ...(Array.isArray(fallback.familyAccounts) ? fallback.familyAccounts : []),
+    ...(Array.isArray(primary.familyAccounts) ? primary.familyAccounts : []),
+  ];
+  const accountMap = new Map();
+  accounts.forEach((account) => {
+    const key = account?.id || account?.username;
+    if (key && !accountMap.has(key)) accountMap.set(key, account);
+  });
+  merged.familyAccounts = Array.from(accountMap.values());
+  if (!merged.familyUserId && merged.familyAccounts[0]) {
+    merged.familyUserId = merged.familyAccounts[0].id || "";
+    merged.familyUserStatus = merged.familyAccounts[0].status || "";
+    merged.username = merged.username || merged.familyAccounts[0].username || "";
+  }
+  return merged;
+}
+
+function mergeCloudEldersIntoState(cloudElders = [], users = []) {
+  const normalized = (Array.isArray(cloudElders) ? cloudElders : [])
+    .filter((elder) => elder && elder.id)
+    .map((elder) => ({
+      ...elder,
+      institutionId: elder.institutionId || elder.institution_id || state.institution.id || "",
+      floor: normalizeFloorNumber(elder.floor, 1),
+      assignedCaregiverId: elder.assignedCaregiverId || elder.assigned_caregiver_id || "",
+      reportTemplateId: elder.reportTemplateId || elder.report_template_id || "",
+      reportTemplateTitle: elder.reportTemplateTitle || elder.report_template_title || "",
+    }));
+  if (!normalized.length) return false;
+
+  const previous = JSON.stringify([...state.elders].sort((a, b) => (a.id || "").localeCompare(b.id || "")));
+  let merged = dedupeElderRecords([...normalized, ...(state.elders || [])]);
+  const cloudById = new Map(normalized.map((elder) => [elder.id, elder]));
+  merged = merged.map((elder) => {
+    const cloud = cloudById.get(elder.id);
+    if (!cloud) return elder;
+    return {
+      ...elder,
+      ...cloud,
+      familyAccounts: elder.familyAccounts || cloud.familyAccounts || [],
+      familyUserIds: elder.familyUserIds || cloud.familyUserIds || [],
+      familyUserId: elder.familyUserId || cloud.familyUserId || "",
+      familyUserStatus: elder.familyUserStatus || cloud.familyUserStatus || "",
+      username: elder.username || cloud.username || "",
+    };
+  });
+  if (Array.isArray(users) && users.length) {
+    merged = attachFamilyAccountsToElders(merged, users);
+  }
+  state.elders = JSON.parse(JSON.stringify(merged.sort((a, b) => (a.id || "").localeCompare(b.id || ""))));
+  return JSON.stringify(state.elders) !== previous;
+}
+
+function dedupeElderRecords(elders = []) {
+  const result = [];
+  const keyToIndex = new Map();
+  elders.forEach((item) => {
+    if (!item || typeof item !== "object") return;
+    const record = JSON.parse(JSON.stringify(item));
+    record.floor = normalizeFloorNumber(record.floor, 1);
+    const keys = getElderDedupeKeys(record);
+    const existingIndexes = keys.map((key) => keyToIndex.get(key)).filter((index) => index !== undefined);
+    const existingIndex = existingIndexes.length ? existingIndexes[0] : -1;
+    if (existingIndex < 0) {
+      const nextIndex = result.length;
+      result.push(record);
+      keys.forEach((key) => keyToIndex.set(key, nextIndex));
+      return;
+    }
+    const existing = result[existingIndex];
+    const preferred = elderRecordScore(record) > elderRecordScore(existing) ? record : existing;
+    const fallback = preferred === record ? existing : record;
+    result[existingIndex] = mergeElderRecords(preferred, fallback);
+    getElderDedupeKeys(result[existingIndex]).forEach((key) => keyToIndex.set(key, existingIndex));
+  });
+  return result;
+}
+
+function attachFamilyAccountsToElders(elders = [], users = []) {
+  const familyUsersByElderId = new Map();
+  users.filter((u) => u.role === "family" && u.status === "active").forEach((user) => {
+    const elderId = user.roleEntityId || user.role_entity_id || "";
+    if (!elderId) return;
+    if (!familyUsersByElderId.has(elderId)) familyUsersByElderId.set(elderId, []);
+    familyUsersByElderId.get(elderId).push({
+      id: user.id || "",
+      username: user.username || "",
+      displayName: user.displayName || user.display_name || user.username || "",
+      status: user.status || "",
+    });
+  });
+  return elders.map((elder) => {
+    const familyAccounts = familyUsersByElderId.get(elder.id) || elder.familyAccounts || [];
+    const primaryAccount = familyAccounts[0] || null;
+    return {
+      ...elder,
+      familyAccounts,
+      familyUserIds: familyAccounts.map((account) => account.id).filter(Boolean),
+      familyUserId: elder.familyUserId || primaryAccount?.id || "",
+      familyUserStatus: elder.familyUserStatus || primaryAccount?.status || "",
+      username: elder.username || primaryAccount?.username || "",
+    };
+  });
+}
+
+function ensureAttendanceState() {
+  state.attendance = state.attendance || {};
+  state.attendance.shiftTemplates = Array.isArray(state.attendance.shiftTemplates) && state.attendance.shiftTemplates.length
+    ? state.attendance.shiftTemplates
+    : JSON.parse(JSON.stringify(DEFAULT_SHIFT_TEMPLATES));
+  state.attendance.records = Array.isArray(state.attendance.records) ? state.attendance.records : [];
+  state.ui.selectedAttendanceShift = state.ui.selectedAttendanceShift || "all";
+  state.ui.attendanceShiftSettingsOpen = Boolean(state.ui.attendanceShiftSettingsOpen);
+  return state.attendance;
+}
+
+function getCaregiverDefaultShiftIds(caregiver = {}) {
+  ensureAttendanceState();
+  const knownIds = new Set(state.attendance.shiftTemplates.map((shift) => shift.id));
+  const raw = Array.isArray(caregiver.shiftIds) && caregiver.shiftIds.length
+    ? caregiver.shiftIds
+    : [caregiver.defaultShiftId || "morning"];
+  return raw.filter((id) => knownIds.has(id));
+}
+
+function timeToMinutes(value = "00:00") {
+  const [hour, minute] = String(value || "00:00").split(":").map((item) => Number.parseInt(item, 10) || 0);
+  return hour * 60 + minute;
+}
+
+function buildCaregiverShiftSchedules(date = formatNowDate()) {
+  ensureAttendanceState();
+  return state.caregivers
+    .filter((caregiver) => caregiver.cloudUserId)
+    .flatMap((caregiver) => getCaregiverDefaultShiftIds(caregiver).map((shiftId) => {
+      const shift = state.attendance.shiftTemplates.find((item) => item.id === shiftId) || state.attendance.shiftTemplates[0];
+      const record = state.attendance.records.find(
+        (item) => item.date === date && item.caregiverId === caregiver.id && item.shiftId === shift.id,
+      );
+      return {
+        id: `${date}:${caregiver.id}:${shift.id}`,
+        date,
+        caregiverId: caregiver.id,
+        caregiverName: caregiver.name,
+        shiftId: shift.id,
+        shiftName: shift.name,
+        start: shift.start,
+        end: shift.end,
+        clockInAt: record?.clockInAt || "",
+        clockOutAt: record?.clockOutAt || "",
+        late: Boolean(record?.clockInAt && timeToMinutes(record.clockInAt) > timeToMinutes(shift.start) + 30),
+        status: record?.clockInAt
+          ? (timeToMinutes(record.clockInAt) > timeToMinutes(shift.start) + 30 ? "late" : "checked-in")
+          : "missing",
+      };
+    }));
+}
+
+function buildDirectorAttendanceSummary(date = formatNowDate(), shiftId = "all") {
+  const schedules = buildCaregiverShiftSchedules(date);
+  const visibleSchedules = shiftId && shiftId !== "all" ? schedules.filter((item) => item.shiftId === shiftId) : schedules;
+  const unitKeys = shiftId && shiftId !== "all"
+    ? visibleSchedules.map((item) => item.id)
+    : Array.from(new Set(visibleSchedules.map((item) => item.caregiverId)));
+  const checkedInKeys = new Set();
+  const lateKeys = new Set();
+  visibleSchedules.forEach((item) => {
+    const key = shiftId && shiftId !== "all" ? item.id : item.caregiverId;
+    if (item.clockInAt) checkedInKeys.add(key);
+    if (item.late) lateKeys.add(key);
+  });
+  const expected = unitKeys.length;
+  const checkedIn = checkedInKeys.size;
+  const late = lateKeys.size;
+  const missing = Math.max(0, expected - checkedIn);
+  return {
+    date,
+    shiftId,
+    expected,
+    checkedIn,
+    late,
+    missing,
+    rate: expected ? `${Math.round((checkedIn / expected) * 100)}%` : "0%",
+    schedules: visibleSchedules,
+    shiftTemplates: ensureAttendanceState().shiftTemplates,
+    settingsOpen: Boolean(state.ui.attendanceShiftSettingsOpen),
+  };
+}
+
+function normalizeAttendanceRecord(record = {}) {
+  const date = record.date || record.recordDate || record.record_date || formatNowDate();
+  const clockInRaw = record.clockInAt || record.clock_in_at || "";
+  const clockOutRaw = record.clockOutAt || record.clock_out_at || "";
+  const shiftId = record.shiftId || record.shift_id || "morning";
+  const shift = ensureAttendanceState().shiftTemplates.find((item) => item.id === shiftId) || {};
+  return {
+    id: record.id || `attendance-${date}-${record.caregiverId || record.caregiver_id || ""}-${shiftId}`,
+    institutionId: record.institutionId || record.institution_id || "",
+    date,
+    recordDate: date,
+    caregiverId: record.caregiverId || record.caregiver_id || "",
+    caregiverName: record.caregiverName || record.caregiver_name || "",
+    employeeNo: record.employeeNo || record.employee_no || "",
+    registeredUserId: record.registeredUserId || record.registered_user_id || "",
+    username: record.username || "",
+    shiftId,
+    shiftName: record.shiftName || record.shift_name || shift.name || "",
+    shiftStart: record.shiftStart || record.shift_start || shift.start || "",
+    shiftEnd: record.shiftEnd || record.shift_end || shift.end || "",
+    clockInAt: clockInRaw,
+    clockOutAt: clockOutRaw,
+    clockInTime: String(clockInRaw || "").slice(11, 16) || clockInRaw,
+    status: record.status || "",
+    late: Boolean(record.late),
+    lateMinutes: Number(record.lateMinutes ?? record.late_minutes ?? 0) || 0,
+    source: record.source || "",
+    updatedAt: record.updatedAt || record.updated_at || "",
+  };
+}
+
+function mergeAttendanceRecord(record = {}) {
+  const normalized = normalizeAttendanceRecord(record);
+  if (!normalized.caregiverId || !normalized.date || !normalized.shiftId) return null;
+  ensureAttendanceState();
+  const index = state.attendance.records.findIndex(
+    (item) => item.date === normalized.date && item.caregiverId === normalized.caregiverId && item.shiftId === normalized.shiftId,
+  );
+  if (index >= 0) {
+    state.attendance.records[index] = { ...state.attendance.records[index], ...normalized };
+  } else {
+    state.attendance.records.push(normalized);
+  }
+  return normalized;
+}
+
+function buildAttendancePayloadFromRecord(record = {}) {
+  const institutionId = getCurrentSessionInstitutionId();
+  const caregiver = state.caregiver || {};
+  const shift = ensureAttendanceState().shiftTemplates.find((item) => item.id === record.shiftId) || {};
+  return {
+    institutionId,
+    recordDate: record.date || record.recordDate || formatNowDate(),
+    caregiverId: record.caregiverId || caregiver.id,
+    caregiverName: record.caregiverName || caregiver.name || "",
+    employeeNo: record.employeeNo || caregiver.employeeNo || "",
+    registeredUserId: caregiver.cloudUserId || state.session?.user?.id || "",
+    username: caregiver.username || state.session?.user?.username || "",
+    shiftId: record.shiftId || shift.id || "morning",
+    shiftName: record.shiftName || shift.name || "",
+    shiftStart: record.shiftStart || shift.start || "",
+    shiftEnd: record.shiftEnd || shift.end || "",
+    clockInAt: record.clockInAt || nowBeijingIso(),
+    clockOutAt: record.clockOutAt || "",
+    source: "caregiver-app",
+    rawPayload: {
+      location: state.session.clockInLocation || "",
+      locationRaw: state.session.clockInLocationRaw || null,
+    },
+  };
+}
+
+function recordCurrentCaregiverClockIn() {
+  if (!state.caregiver?.id) return null;
+  ensureAttendanceState();
+  const date = formatNowDate();
+  const nowTime = formatNowTime();
+  const clockInAt = nowBeijingIso();
+  const currentMinutes = timeToMinutes(nowTime);
+  const shiftIds = getCaregiverDefaultShiftIds(state.caregiver);
+  const candidates = state.attendance.shiftTemplates.filter((shift) => shiftIds.includes(shift.id));
+  const targetShift = candidates.find((shift) => {
+    const start = timeToMinutes(shift.start);
+    const end = timeToMinutes(shift.end);
+    if (end <= start) return currentMinutes >= start || currentMinutes < end;
+    return currentMinutes >= start && currentMinutes < end;
+  }) || candidates[0] || state.attendance.shiftTemplates[0];
+  const existing = state.attendance.records.find(
+    (item) => item.date === date && item.caregiverId === state.caregiver.id && item.shiftId === targetShift.id,
+  );
+  if (existing) {
+    existing.clockInAt = existing.clockInAt || clockInAt;
+    existing.clockInTime = existing.clockInTime || nowTime;
+    return existing;
+  }
+  const record = {
+    id: `attendance-${date}-${state.caregiver.id}-${targetShift.id}`,
+    institutionId: getCurrentSessionInstitutionId(),
+    date,
+    recordDate: date,
+    caregiverId: state.caregiver.id,
+    caregiverName: state.caregiver.name,
+    employeeNo: state.caregiver.employeeNo || "",
+    registeredUserId: state.caregiver.cloudUserId || state.session?.user?.id || "",
+    username: state.caregiver.username || state.session?.user?.username || "",
+    shiftId: targetShift.id,
+    shiftName: targetShift.name,
+    shiftStart: targetShift.start,
+    shiftEnd: targetShift.end,
+    clockInAt,
+    clockInTime: nowTime,
+    clockOutAt: "",
+  };
+  state.attendance.records.push(record);
+  return record;
+}
+
 function applyInstitutionStateSnapshot(snapshot = {}) {
   const data = normalizeInstitutionStateSnapshot(snapshot);
   if (!data) return false;
@@ -812,21 +1703,31 @@ function applyInstitutionStateSnapshot(snapshot = {}) {
   let changed = false;
 
   if (Array.isArray(personnelInfo.caregivers)) {
-    if (personnelInfo.caregivers.length || !state.caregivers.some((c) => c.cloudUserId)) {
+    const snapshotCaregivers = filterSnapshotCaregiversForCurrentInstitution(personnelInfo.caregivers);
+    if (snapshotCaregivers.length || !state.caregivers.some((c) => c.cloudUserId)) {
       const existingAccounts = {};
       state.caregivers.forEach((c) => {
-        if (c.cloudUserId) existingAccounts[c.id] = { cloudUserId: c.cloudUserId, cloudUserStatus: c.cloudUserStatus, username: c.username };
+        if (c.cloudUserId) {
+          existingAccounts[c.id] = {
+            cloudUserId: c.cloudUserId,
+            cloudUserStatus: c.cloudUserStatus,
+            username: c.username,
+            passwordHint: c.passwordHint,
+          };
+        }
       });
-      const cloudIds = new Set(personnelInfo.caregivers.map((c) => c.id));
+      const cloudIds = new Set(snapshotCaregivers.map((c) => c.id));
       const localOnly = state.caregivers.filter((c) => !cloudIds.has(c.id));
-      const sorted = [...personnelInfo.caregivers, ...localOnly].sort((a, b) => (a.id || "").localeCompare(b.id || ""));
-      sorted.forEach((c) => {
+      const combined = [...snapshotCaregivers, ...localOnly];
+      combined.forEach((c) => {
         if (existingAccounts[c.id]) {
           c.cloudUserId = existingAccounts[c.id].cloudUserId;
           c.cloudUserStatus = existingAccounts[c.id].cloudUserStatus;
           c.username = c.username || existingAccounts[c.id].username;
+          c.passwordHint = c.passwordHint || existingAccounts[c.id].passwordHint || "";
         }
       });
+      const sorted = dedupeCaregiverRecords(combined).sort((a, b) => (a.id || "").localeCompare(b.id || ""));
       const prev = JSON.stringify([...state.caregivers].sort((a, b) => (a.id || "").localeCompare(b.id || "")));
       state.caregivers = JSON.parse(JSON.stringify(sorted));
       if (JSON.stringify(sorted) !== prev) structureChanged = true;
@@ -836,23 +1737,44 @@ function applyInstitutionStateSnapshot(snapshot = {}) {
     const hasCloudData = state.elders.some((e) => e.familyUserId);
     if (personnelInfo.elders.length || !hasCloudData) {
       const existingAccounts = {};
+      const existingAssignments = {};
       state.elders.forEach((e) => {
         if (e.familyUserId) existingAccounts[e.id] = { familyUserId: e.familyUserId, familyUserStatus: e.familyUserStatus, username: e.username };
+        if (e.assignedCaregiverId) existingAssignments[e.id] = e.assignedCaregiverId;
       });
-      const cloudIds = new Set(personnelInfo.elders.map((e) => e.id));
+      const snapshotElders = personnelInfo.elders.map((e) => {
+        const item = { ...e };
+        if (!item.assignedCaregiverId && existingAssignments[item.id]) {
+          item.assignedCaregiverId = existingAssignments[item.id];
+        }
+        return item;
+      });
+      const cloudIds = new Set(snapshotElders.map((e) => e.id));
       const localOnly = state.elders.filter((e) => !cloudIds.has(e.id));
-      const sorted = [...personnelInfo.elders, ...localOnly].sort((a, b) => (a.id || "").localeCompare(b.id || ""));
-      sorted.forEach((e) => {
+      const combined = [...snapshotElders, ...localOnly];
+      combined.forEach((e) => {
         if (existingAccounts[e.id]) {
           e.familyUserId = existingAccounts[e.id].familyUserId;
           e.familyUserStatus = existingAccounts[e.id].familyUserStatus;
           e.username = e.username || existingAccounts[e.id].username;
         }
       });
+      const sorted = dedupeElderRecords(combined).sort((a, b) => (a.id || "").localeCompare(b.id || ""));
       const prev = JSON.stringify([...state.elders].sort((a, b) => (a.id || "").localeCompare(b.id || "")));
       state.elders = JSON.parse(JSON.stringify(sorted));
       if (JSON.stringify(sorted) !== prev) structureChanged = true;
     }
+  }
+  if (personnelInfo.attendance && typeof personnelInfo.attendance === "object") {
+    const prev = JSON.stringify(state.attendance || {});
+    state.attendance = {
+      ...ensureAttendanceState(),
+      ...JSON.parse(JSON.stringify(personnelInfo.attendance)),
+    };
+    ensureAttendanceState();
+    if (JSON.stringify(state.attendance || {}) !== prev) structureChanged = true;
+  } else {
+    ensureAttendanceState();
   }
   if (institutionInfo.institution) {
     const prevInst = JSON.stringify(state.institution);
@@ -878,12 +1800,28 @@ function applyInstitutionStateSnapshot(snapshot = {}) {
     state.elderCarePlans = JSON.parse(JSON.stringify(sorted));
     if (JSON.stringify(sorted) !== prev) structureChanged = true;
   }
+  const cloudRecordDate = taskInfo.recordDate || taskInfo.record_date || taskInfo.selectedRecordDate || "";
+  const localBusinessDate = formatNowDate();
+  const effectiveCloudRecordDate = cloudRecordDate && cloudRecordDate >= localBusinessDate ? cloudRecordDate : "";
+  if (cloudRecordDate && cloudRecordDate < localBusinessDate) {
+    taskInfo.recordDate = localBusinessDate;
+    taskInfo.selectedRecordDate = localBusinessDate;
+    changed = true;
+  }
+  if (effectiveCloudRecordDate && state.director.date !== effectiveCloudRecordDate) {
+    state.director.date = effectiveCloudRecordDate;
+    if (!state.ui.directorAuditDate) state.ui.directorAuditDate = effectiveCloudRecordDate;
+    changed = true;
+  }
 
   if (structureChanged) {
-    if (currentCaregiver) {
-      state.caregiver = { ...currentCaregiver };
-    } else if (state.session.identity === "caregiver" && state.caregivers[0]) {
-      state.caregiver = { ...state.caregivers[0] };
+    if (state.session.identity === "caregiver" && bindCurrentCaregiverFromSession()) {
+      // Current caregiver is pinned by session.roleEntityId, not by list order.
+    } else {
+      const currentCaregiver = state.caregiver?.id ? getCaregiverById(state.caregiver.id) : null;
+      if (currentCaregiver) {
+        state.caregiver = { ...currentCaregiver };
+      }
     }
     changed = true;
   }
@@ -1003,6 +1941,231 @@ function findDailyReport(elderId, recordDate = formatNowDate()) {
   return state.dailyReports.find(
     (item) => item.elderId === elderId && item.recordDate === recordDate && item.caregiverId === state.caregiver.id,
   );
+}
+
+function getHistoryRecordDate(item) {
+  const text = String(item?.time || "");
+  const match = text.match(/^\d{4}-\d{2}-\d{2}/);
+  return match ? match[0] : "";
+}
+
+function getHistoryFilterRecordDate() {
+  const filter = state.ui.historyFilter.time;
+  const today = formatNowDate();
+  if (filter === "昨日") return shiftDate(today, -1);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(filter || ""))) return filter;
+  return today;
+}
+
+function getCareReportStatusMetaForRecord(record) {
+  if (!record) return { text: "未填写", tone: "muted", rank: 0 };
+  if (record.syncStatus === "synced") return { text: "已上传", tone: "success", rank: 3 };
+  if (record.syncStatus === "pending-sync") return { text: "待同步", tone: "warning", rank: 2 };
+  if (record.syncStatus === "sync-failed") return { text: "上传失败", tone: "error", rank: 1 };
+  return { text: "草稿", tone: "warning", rank: 1 };
+}
+
+function createElderFallbackFromCareReport(report = {}, elderId = "") {
+  const source = report || {};
+  if (!report && !elderId) return null;
+  const sourceFloor = source.floor || source.elderFloor;
+  return {
+    id: elderId || source.elderId || "",
+    name: source.elderName || source.name || "未知老人",
+    room: source.room || "",
+    floor: sourceFloor ? normalizeFloorNumber(sourceFloor, 0) : "",
+    level: source.careLevelLabel || source.level || "",
+    bed: source.bed || "",
+  };
+}
+
+function buildCaregiverRecordWorkspace(caregiverTasks = []) {
+  const recordDate = getHistoryFilterRecordDate();
+  const search = String(state.ui.historyFilter.search || "").trim();
+  const statusFilter = state.ui.historyFilter.status || "全部";
+  const tasksForDate = caregiverTasks.filter((task) => !task.recordDate || task.recordDate === recordDate);
+  const operatedTasksForDate = tasksForDate.filter(hasCaregiverTaskOperation);
+  const cloudReportsForDate = state.dailyReports.filter(
+    (record) => record.caregiverId === state.caregiver.id && record.recordDate === recordDate,
+  );
+  const elderIds = new Set([
+    ...operatedTasksForDate.map((task) => task.elderId).filter(Boolean),
+    ...cloudReportsForDate.map((record) => record.elderId).filter(Boolean),
+  ]);
+
+  const cards = Array.from(elderIds)
+    .map((elderId) => {
+      const report = findDailyReport(elderId, recordDate) || null;
+      const elder = getElderById(elderId) || createElderFallbackFromCareReport(report, elderId);
+      if (!elder) return null;
+      const tasks = operatedTasksForDate.filter((task) => task.elderId === elder.id);
+      const completedCount = tasks.filter((task) => task.status === "completed").length;
+      const issueCount = tasks.filter((task) => task.status === "risk" || task.status === "refused").length;
+      const pendingCount = tasks.filter((task) => task.status === "pending").length;
+      const historyCount = state.history.filter(
+        (item) => item.elderId === elder.id && getHistoryRecordDate(item) === recordDate,
+      ).length;
+      const reportStatus = getCareReportStatusMetaForRecord(report);
+      const nextTask = tasks.find((task) => task.status === "pending") || null;
+      const cloudRows = Array.isArray(report?.timelineTaskSnapshot) ? report.timelineTaskSnapshot : [];
+      const cloudCompletedCount = cloudRows.filter((item) => item.completedAt).length;
+      const cloudIssueCount = cloudRows.filter((item) => item.exceptionReportedAt).length;
+      const cloudEvidenceCount = cloudRows.reduce((sum, item) => sum + Number(item.evidenceCount || 0), 0);
+      const cloudNoteCount = cloudRows.filter((item) => String(item.note || "").trim()).length;
+      const cloudNotePreview = cloudRows
+        .map((item) => String(item.note || "").trim())
+        .filter(Boolean)
+        .slice(0, 2)
+        .join("；");
+      const evidenceCount = tasks.reduce(
+        (sum, task) =>
+          sum +
+          getTaskEvidenceList(task).length +
+          Number(task.recordEvidenceCount || 0) +
+          Number(task.exceptionEvidenceCount || 0),
+        0,
+      );
+      const noteCount = tasks.filter((task) => getTaskRecordText(task)).length;
+      const totalTasks = Math.max(tasks.length, cloudRows.length);
+      const checkInCount = Math.max(completedCount, cloudCompletedCount);
+      const messageCount = Math.max(noteCount, cloudNoteCount) + Math.max(evidenceCount, cloudEvidenceCount);
+      const recordRows = buildCaregiverRecordRowsForElder(elder.id, recordDate);
+
+      return {
+        id: elder.id,
+        elderId: elder.id,
+        name: elder.name,
+        room: elder.room,
+        floor: elder.floor || "",
+        level: elder.level,
+        bed: elder.bed,
+        recordDate,
+        report,
+        reportStatus,
+        totalTasks,
+        completedCount: checkInCount,
+        checkInCount,
+        pendingCount,
+        issueCount: Math.max(issueCount, cloudIssueCount),
+        historyCount,
+        evidenceCount: Math.max(evidenceCount, cloudEvidenceCount),
+        noteCount: Math.max(noteCount, cloudNoteCount),
+        messageCount,
+        latestNote: cloudNotePreview || tasks.map((task) => getTaskRecordText(task)).filter(Boolean).slice(0, 2).join("；"),
+        recordRows,
+        nextTask,
+      };
+    })
+    .filter(Boolean)
+    .filter((item) => {
+      const matchesSearch = !search || item.name.includes(search) || String(item.room).includes(search);
+      const matchesStatus =
+        statusFilter === "全部" ||
+        (statusFilter === "有打卡" && item.checkInCount > 0) ||
+        (statusFilter === "有记录" && item.messageCount > 0);
+      return matchesSearch && matchesStatus;
+    })
+    .sort((left, right) => {
+      if (left.reportStatus.rank !== right.reportStatus.rank) return left.reportStatus.rank - right.reportStatus.rank;
+      if (left.issueCount !== right.issueCount) return right.issueCount - left.issueCount;
+      if (left.floor !== right.floor) return left.floor - right.floor;
+      return String(left.room).localeCompare(String(right.room));
+    });
+
+  const summary = {
+    total: cards.length,
+    synced: cards.reduce((sum, item) => sum + item.checkInCount, 0),
+    drafts: 0,
+    issues: cards.reduce((sum, item) => sum + item.evidenceCount, 0),
+    notes: cards.reduce((sum, item) => sum + item.noteCount, 0),
+    messages: cards.reduce((sum, item) => sum + item.messageCount, 0),
+    cloudFetchedAt: state.cloud.careReportsFetchedAt || "",
+    cloudLoading: Boolean(state.cloud.careReportsLoading),
+    cloudError: state.cloud.careReportsError || "",
+    cloudSync: state.cloud.lastCaregiverRecordSync || null,
+  };
+
+  return {
+    recordDate,
+    cards,
+    summary,
+  };
+}
+
+function buildCaregiverRecordDetail(elderId = "") {
+  const recordDate = getHistoryFilterRecordDate();
+  const elder = getElderById(elderId) || createElderFallbackFromCareReport(findDailyReport(elderId, recordDate), elderId);
+  const report = findDailyReport(elderId, recordDate) || null;
+  const cloudRows = Array.isArray(report?.timelineTaskSnapshot) ? report.timelineTaskSnapshot : [];
+  const localTasks = sortTasksBySchedule(
+    state.tasks.filter(
+      (task) =>
+        task.caregiverId === state.caregiver.id &&
+        task.elderId === elderId &&
+        (!task.recordDate || task.recordDate === recordDate) &&
+        hasCaregiverTaskOperation(task),
+    ),
+  );
+  const rowsByKey = new Map();
+
+  cloudRows.forEach((item, index) => {
+    const key = item.taskId || `cloud-${index}`;
+    rowsByKey.set(key, {
+      id: key,
+      time: item.completedAt || item.exceptionReportedAt || (item.schedule ? `${recordDate} ${item.schedule}` : ""),
+      taskName: item.title || "任务卡",
+      checkInTime: item.completedAt || "",
+      note: String(item.note || "").trim(),
+      photos: normalizeEvidenceList(item.evidence),
+      photoCount: Number(item.evidenceCount || 0),
+    });
+  });
+
+  localTasks.forEach((task, index) => {
+    const evidence = getTaskEvidenceList(task);
+    const key = task.id || `local-${index}`;
+    const existing = rowsByKey.get(key) || {};
+    rowsByKey.set(key, {
+      id: key,
+      time: existing.time || task.completedAt || task.exceptionReportedAt || task.recordedAt || task.recordUpdatedAt || "",
+      taskName: existing.taskName || task.title || "任务卡",
+      checkInTime: existing.checkInTime || task.completedAt || "",
+      note: existing.note || getTaskRecordText(task),
+      photos: existing.photos?.length ? existing.photos : evidence,
+      photoCount: Math.max(Number(existing.photoCount || 0), evidence.length, Number(task.recordEvidenceCount || 0) + Number(task.exceptionEvidenceCount || 0)),
+    });
+  });
+
+  const rows = Array.from(rowsByKey.values())
+    .filter((row) => row.checkInTime || row.note || row.photoCount > 0)
+    .sort((left, right) => String(left.time || "").localeCompare(String(right.time || "")));
+  const hydratedEvidence = state.ui.caregiverRecordEvidenceByTaskId || {};
+  rows.forEach((row) => {
+    const hydrated = normalizeEvidenceList(hydratedEvidence[row.id]);
+    if (hydrated.length) {
+      row.photos = hydrated;
+      row.photoCount = Math.max(Number(row.photoCount || 0), hydrated.length);
+    }
+  });
+  const selectedRowId = state.ui.selectedCaregiverRecordTaskId || "";
+  const visibleRows = selectedRowId ? rows.filter((row) => row.id === selectedRowId) : rows;
+
+  return {
+    elderId,
+    elderName: elder?.name || report?.elderName || "",
+    room: elder?.room || report?.room || "",
+    floor: elder?.floor || "",
+    recordDate,
+    caregiverName: state.caregiver.name || report?.caregiverName || "",
+    checkInCount: visibleRows.filter((row) => row.checkInTime).length,
+    noteCount: visibleRows.filter((row) => row.note).length,
+    photoCount: visibleRows.reduce((sum, row) => sum + Number(row.photoCount || 0), 0),
+    rows: visibleRows,
+  };
+}
+
+function buildCaregiverRecordRowsForElder(elderId = "") {
+  return buildCaregiverRecordDetail(elderId).rows.filter(Boolean);
 }
 
 function upsertDailyReport(record, syncStatus) {
@@ -1141,14 +2304,27 @@ function getCachedCareReportsByDate(dateString = "") {
 }
 
 async function downloadDirectorCareReports(filters = {}, options = {}) {
-  const response = await fetchCareRecords({
+  const institutionId = filters.institutionId || getCurrentSessionInstitutionId() || state.institution.id || "";
+  if (!institutionId) {
+    throw new Error("当前登录会话缺少养老院ID，无法拉取护理记录");
+  }
+  const response = await fetchCaregiverTaskRecords({
     limit: filters.limit || 120,
     elderId: filters.elderId || "",
     recordDate: filters.recordDate || "",
     caregiverId: filters.caregiverId || "",
-    institutionId: state.institution.id || "",
+    institutionId,
   });
-  const nextItems = Array.isArray(response?.items) ? response.items.map((item) => normalizeCloudCareRecord(item)) : [];
+  const taskRecordItems = Array.isArray(response?.items) ? response.items : [];
+  const nextItems = groupTaskRecordsAsCareReports(taskRecordItems).map((item) => normalizeCloudCareRecord(item));
+  state.cloud.lastCaregiverRecordSync = {
+    institutionId,
+    caregiverId: filters.caregiverId || "",
+    recordDate: filters.recordDate || "",
+    returnedCount: taskRecordItems.length,
+    mergedCount: nextItems.length,
+    fetchedAt: response?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`,
+  };
 
   if (options.clear) {
     state.cloud.careReports = [];
@@ -1179,6 +2355,18 @@ function setCloudTasksError(message = "") {
 
 function setCloudTasksFetchedAt(timestamp = "") {
   state.cloud.tasksFetchedAt = timestamp;
+}
+
+function setCloudInventoryLoading(isLoading) {
+  state.cloud.inventoryLoading = Boolean(isLoading);
+}
+
+function setCloudInventoryError(message = "") {
+  state.cloud.inventoryError = message;
+}
+
+function setCloudInventoryFetchedAt(timestamp = "") {
+  state.cloud.inventoryFetchedAt = timestamp;
 }
 
 const CARE_LEVEL_OPTIONS = ["一级护理", "二级护理", "三级护理"];
@@ -1401,18 +2589,130 @@ function getCaregiverById(caregiverId) {
   return state.caregivers.find((item) => item.id === caregiverId);
 }
 
+function buildCaregiverFromSessionUser(user = {}) {
+  const roleEntityId = user.roleEntityId || user.role_entity_id || "";
+  if (!roleEntityId) return null;
+  return {
+    id: roleEntityId,
+    name: user.displayName || user.display_name || user.username || "护工",
+    username: user.username || "",
+    role: "护工",
+    employeeNo: "",
+    floor: 1,
+    shift: "",
+    status: "on-duty",
+    phone: "",
+    cloudUserId: user.id || "",
+    cloudUserStatus: user.status || "active",
+    institutionId: user.institutionId || user.institution_id || state.institution.id || "",
+  };
+}
+
+function bindSessionUserToState(user = {}) {
+  if (!user) return "";
+  const instId = user.institutionId || user.institution_id || "";
+  if (instId && state.institution.id !== instId) {
+    state.institution = {
+      ...state.institution,
+      id: instId,
+      name: "",
+    };
+    state.caregivers = [];
+    state.elders = [];
+    state.tasks = [];
+    state.dailyReportTemplates = {};
+    state.elderCarePlans = [];
+    state.anomalies = [];
+  }
+
+  if (user.role === "director" || user.role === "admin" || user.role === "superadmin") {
+    state.director.reviewerName = user.displayName || user.display_name || user.username || state.director.reviewerName || "院长";
+    state.director.name = state.director.reviewerName;
+    state.director.role = user.role === "director" ? "院长" : "管理员";
+    state.director.accountId = user.username || user.id || state.director.accountId || "";
+    state.director.phone = user.phone || user.mobile || state.director.phone || "未设置";
+  }
+
+  return instId;
+}
+
+function bindCurrentCaregiverFromSession(user = state.session.user, options = {}) {
+  if (!user || user.role !== "caregiver") return false;
+  const roleEntityId = user.roleEntityId || user.role_entity_id || "";
+  if (!roleEntityId) return false;
+
+  const matched = getCaregiverById(roleEntityId);
+  if (matched) {
+    state.caregiver = { ...matched };
+    return true;
+  }
+
+  const fallback = buildCaregiverFromSessionUser(user);
+  if (!fallback) return false;
+  state.caregiver = fallback;
+  if (options.insertFallback !== false) {
+    state.caregivers = dedupeCaregiverRecords([fallback, ...(state.caregivers || [])]);
+  }
+  return true;
+}
+
+function getCurrentSessionInstitutionId() {
+  const userInstitutionId = state.session?.user?.institutionId || state.session?.user?.institution_id || "";
+  const caregiverInstitutionId = state.caregiver?.institutionId || state.caregiver?.institution_id || "";
+  const stateInstitutionId = state.institution?.id || "";
+  return userInstitutionId || caregiverInstitutionId || stateInstitutionId || "";
+}
+
+function getSyncVersionKey(institutionId, recordDate, domain) {
+  return [institutionId || "", recordDate || "", domain || ""].join("|");
+}
+
+async function checkCloudSyncDomains(domains = [], options = {}) {
+  if (!isCloudSyncConfigured()) return null;
+  const institutionId = options.institutionId || getCurrentSessionInstitutionId();
+  if (!institutionId) return null;
+  const recordDate = options.recordDate || formatNowDate();
+  const domainList = Array.isArray(domains) ? domains.filter(Boolean) : String(domains || "").split(",").filter(Boolean);
+  const known = {};
+  domainList.forEach((domain) => {
+    const key = getSyncVersionKey(institutionId, recordDate, domain);
+    if (syncDomainVersions[key]) known[domain] = syncDomainVersions[key];
+  });
+  const response = await fetchSyncStatus({ institutionId, recordDate, domains: domainList, known });
+  const domainStatus = response?.domains || {};
+  if (options.commit !== false) {
+    commitCloudSyncDomains(domainStatus, { institutionId, recordDate });
+  }
+  return domainStatus;
+}
+
+function commitCloudSyncDomains(domainStatus = {}, options = {}) {
+  const institutionId = options.institutionId || getCurrentSessionInstitutionId();
+  const recordDate = options.recordDate || formatNowDate();
+  Object.entries(domainStatus || {}).forEach(([domain, info]) => {
+    if (info?.version) {
+      syncDomainVersions[getSyncVersionKey(institutionId, recordDate, domain)] = info.version;
+    }
+  });
+}
+
+function syncDomainChanged(status, domain) {
+  if (!status || !status[domain]) return true;
+  return Boolean(status[domain].changed);
+}
+
 function getCaregiverForFloor(floor, elderId = null) {
   const normalizedFloor = Number(floor || 0);
-  const floorCaregivers = state.caregivers.filter((item) => Number(item.floor) === normalizedFloor);
-  if (!floorCaregivers.length) return state.caregivers[0] || null;
-
   if (elderId) {
     const elder = getElderById(elderId);
     if (elder && elder.assignedCaregiverId) {
-      const assigned = floorCaregivers.find((c) => c.id === elder.assignedCaregiverId);
+      const assigned = getCaregiverById(elder.assignedCaregiverId);
       if (assigned) return assigned;
     }
   }
+
+  const floorCaregivers = state.caregivers.filter((item) => Number(item.floor) === normalizedFloor);
+  if (!floorCaregivers.length) return state.caregivers[0] || null;
 
   if (floorCaregivers.length === 1 || !elderId) return floorCaregivers[0];
 
@@ -1545,6 +2845,7 @@ function syncDirectorPlanSelection() {
 
 function getActiveTab(route) {
   if (["home", "tasks", "room-select", "elder-detail", "task-detail", "caregiver-daily-report"].includes(route)) return "home";
+  if (route === "inventory-usage") return "history";
   if (["history", "history-detail"].includes(route)) return "history";
   if (route === "profile") return "profile";
 
@@ -1571,22 +2872,56 @@ function getActiveTab(route) {
   return state.ui.activeTab || "home";
 }
 
-function setCurrentRoom(room) {
-  const elder = state.elders.find((item) => item.room === room);
-  if (!elder) return;
+function setCurrentRoom(target, roomFallback = "") {
+  const selectedFloor = normalizeFloorNumber(state.ui.selectedFloor, 0);
+  const targetObject = typeof target === "object" && target ? target : {};
+  const rawTarget = typeof target === "string" ? target : "";
+  const rawTargetIsElderId =
+    !!rawTarget && (state.elders.some((elder) => elder.id === rawTarget) || state.tasks.some((task) => task.elderId === rawTarget));
+  const targetElderId = targetObject.elderId || (rawTargetIsElderId ? rawTarget : "");
+  const room = targetObject.room || roomFallback || (!targetElderId ? rawTarget : "");
+  const activeRecordDate = getCaregiverRecordDate();
+  const elder = targetElderId
+    ? getElderById(targetElderId)
+    : state.elders.find(
+        (item) => item.room === room && (!selectedFloor || normalizeFloorNumber(item.floor, 0) === selectedFloor),
+      );
+  const fallbackTask = state.tasks.find(
+    (task) =>
+      task.caregiverId === state.caregiver.id &&
+      (!task.recordDate || task.recordDate === activeRecordDate) &&
+      (targetElderId
+        ? task.elderId === targetElderId
+        : String(task.elderRoom || "") === String(room || "")) &&
+      (!selectedFloor || normalizeFloorNumber(task.elderFloor, 0) === selectedFloor),
+  );
+  const selectedElder = elder || createTaskElderFallback(fallbackTask);
+  if (!selectedElder) return false;
 
-  state.ui.selectedRoom = room;
-  state.ui.selectedFloor = elder.floor;
-  state.ui.selectedElderId = elder.id;
+  state.ui.selectedRoom = selectedElder.room || room;
+  state.ui.selectedFloor = normalizeFloorNumber(selectedElder.floor || fallbackTask?.elderFloor, 1);
+  state.ui.selectedElderId = selectedElder.id || "";
 
-  const elderTasks = sortTasksBySchedule(state.tasks.filter((task) => task.elderId === elder.id && task.caregiverId === state.caregiver.id));
+  const elderTasks = sortTasksBySchedule(
+    state.tasks.filter(
+      (task) =>
+        task.elderId === state.ui.selectedElderId &&
+        task.caregiverId === state.caregiver.id &&
+        (!task.recordDate || task.recordDate === activeRecordDate),
+    ),
+  );
   const pendingTask = pickCurrentTask(elderTasks);
 
   state.ui.selectedTaskId = (pendingTask || elderTasks[0] || {}).id || "";
+  return true;
 }
 
 function ensureCurrentSelections() {
-  const currentSelectedElder = getElderById(state.ui.selectedElderId) || state.elders[0];
+  const activeRecordDate = getCaregiverRecordDate();
+  const rawSelectedTask = getTaskById(state.ui.selectedTaskId);
+  let currentSelectedElder =
+    getElderById(state.ui.selectedElderId) ||
+    (rawSelectedTask?.caregiverId === state.caregiver.id ? createTaskElderFallback(rawSelectedTask) : null);
 
   if (currentSelectedElder) {
     state.ui.selectedElderId = currentSelectedElder.id;
@@ -1594,7 +2929,9 @@ function ensureCurrentSelections() {
     state.ui.selectedFloor = currentSelectedElder.floor;
   }
 
-  const caregiverTasks = state.tasks.filter((task) => task.caregiverId === state.caregiver.id);
+  const caregiverTasks = state.tasks.filter(
+    (task) => task.caregiverId === state.caregiver.id && (!task.recordDate || task.recordDate === activeRecordDate),
+  );
   const elderTasks = currentSelectedElder ? sortTasksBySchedule(caregiverTasks.filter((task) => task.elderId === currentSelectedElder.id)) : [];
 
   if (!elderTasks.some((task) => task.id === state.ui.selectedTaskId)) {
@@ -1607,8 +2944,9 @@ function ensureCurrentSelections() {
     state.ui.selectedTaskId = replacementTask ? replacementTask.id : "";
 
     if (replacementTask) {
-      const elder = getElderById(replacementTask.elderId);
+      const elder = getElderById(replacementTask.elderId) || createTaskElderFallback(replacementTask);
       if (elder) {
+        currentSelectedElder = elder;
         state.ui.selectedElderId = elder.id;
         state.ui.selectedRoom = elder.room;
         state.ui.selectedFloor = elder.floor;
@@ -1624,8 +2962,10 @@ function ensureCurrentSelections() {
 }
 
 function refreshDirectorOverview() {
+  const overviewDate = state.director.date || formatNowDate();
+  const overviewTasks = state.tasks.filter((task) => task.recordDate === overviewDate);
   const overview = buildDirectorOverview({
-    tasks: state.tasks,
+    tasks: overviewTasks,
     caregivers: state.caregivers,
     elders: state.elders,
   });
@@ -1666,6 +3006,34 @@ async function syncCaregiverTaskToCloud(task, failureMessage = "任务云端同�
   }
 }
 
+async function refreshCareRecordFromTask(task, options = {}) {
+  if (!task || !task.elderId || !task.caregiverId) return false;
+
+  const elder = getElderById(task.elderId);
+  if (!elder) return false;
+
+  const recordDate = task.recordDate || options.recordDate || formatNowDate();
+    const timelineTasks = sortTasksBySchedule(
+      state.tasks.filter(
+        (item) =>
+          item.caregiverId === task.caregiverId &&
+          item.elderId === task.elderId &&
+          (!item.recordDate || item.recordDate === recordDate) &&
+          hasCaregiverTaskOperation(item),
+      ),
+    );
+  const existingReport = findDailyReport(elder.id, recordDate);
+  const autoRecord = createAutoCareRecordFromTimeline(elder, timelineTasks, recordDate, existingReport);
+  const pendingRecord = upsertDailyReport(autoRecord, "pending-sync");
+  upsertFamilyCareReportNotice(pendingRecord, "pending-sync");
+
+  const syncedReport = mergeCloudCareRecord({ ...pendingRecord, syncStatus: "synced", workflowStatus: "submitted" });
+  upsertFamilyCareReportNotice(syncedReport, "synced");
+  setCloudCareReportsError("");
+  setCloudCareReportsFetchedAt(`${formatNowDate()} ${formatNowTime()}`);
+  return true;
+}
+
 function appendHistoryRecord(task, status, details, exception = "") {
   const elder = getElderById(task.elderId);
   if (!elder) return;
@@ -1702,7 +3070,9 @@ function addAnomaly(task, type, note) {
   };
   state.anomalies.unshift(record);
   if (isCloudSyncConfigured()) {
+    const institutionId = getCurrentSessionInstitutionId();
     createAnomaly({
+      institutionId,
       elderId: record.elderId,
       caregiverId: record.caregiverId,
       type: record.type,
@@ -1725,7 +3095,9 @@ function addQuickAnomaly(elder, note) {
   };
   state.anomalies.unshift(record);
   if (isCloudSyncConfigured()) {
+    const institutionId = getCurrentSessionInstitutionId();
     createAnomaly({
+      institutionId,
       elderId: record.elderId,
       caregiverId: record.caregiverId,
       type: record.type,
@@ -1769,6 +3141,29 @@ function normalizeEvidenceList(evidence) {
   if (!evidence) return [];
   const source = Array.isArray(evidence) ? evidence : [evidence];
   return source.map(normalizeEvidenceItem).filter(Boolean);
+}
+
+function evidenceListHasImageData(evidence) {
+  return normalizeEvidenceList(evidence).some((item) => item.dataUrl);
+}
+
+function taskHasRecordReport(task = {}) {
+  return Boolean(
+    String(task.recordNote || "").trim() ||
+      String(task.recordUpdatedAt || task.recordedAt || "").trim() ||
+      normalizeEvidenceList(task.recordEvidence).length,
+  );
+}
+
+function taskHasExceptionReport(task = {}) {
+  return Boolean(
+    task.status === "risk" ||
+      task.status === "refused" ||
+      String(task.exceptionNote || "").trim() ||
+      String(task.exceptionType || "").trim() ||
+      String(task.exceptionReportedAt || "").trim() ||
+      normalizeEvidenceList(task.exceptionEvidence).length,
+  );
 }
 
 function matchHistoryTimeFilter(item) {
@@ -1833,8 +3228,25 @@ function getTaskReceiptLabel(task) {
   return { text: "已发布", tone: "success" };
 }
 
+function createTaskElderFallback(task = {}) {
+  if (!task?.elderId) return null;
+  return {
+    id: task.elderId,
+    name: task.elderName || "未命名老人",
+    age: "",
+    floor: normalizeFloorNumber(task.elderFloor, 1),
+    room: task.elderRoom || "",
+    bed: task.elderBed || "",
+    level: "护理等级未填",
+    familyContact: "",
+    familyPhone: "",
+    latestBloodPressure: "--",
+    latestHeartRate: "--",
+  };
+}
+
 function enrichTask(task) {
-  const elder = getElderById(task.elderId);
+  const elder = getElderById(task.elderId) || createTaskElderFallback(task);
   const template = getTemplateById(task.templateId);
   const caregiver = getCaregiverById(task.caregiverId);
   const defaultCaregiver = getCaregiverById(task.defaultCaregiverId);
@@ -1951,7 +3363,8 @@ function buildDirectorFloorCaregiverProgress(floor, tasks = state.tasks) {
 }
 
 function buildDirectorExceptionReports(_tasks = state.tasks, opts = {}) {
-  const readIds = new Set(state.ui.directorReadExceptionIds || []);
+  const tasks = Array.isArray(_tasks) ? _tasks : [];
+  const targetDate = opts.recordDate || state.ui.directorAuditDate || state.director.date || formatNowDate();
   const anomalies = (state.anomalies || []).slice();
   const reports = [];
 
@@ -1960,13 +3373,14 @@ function buildDirectorExceptionReports(_tasks = state.tasks, opts = {}) {
   anomalies
     .filter((an) => {
       if (!an) return false;
-      if (opts.readOnly) return readIds.has(an.id);
-      return !readIds.has(an.id);
+      const anomalyDate = an.recordDate || an.date || String(an.reportedAt || an.time || "").slice(0, 10);
+      if (anomalyDate && targetDate && anomalyDate !== targetDate) return false;
+      return true;
     })
     .forEach((an) => {
       const elder = getElderById(an.elderId);
       const caregiver = getCaregiverById(an.caregiverId);
-      const matchedTask = state.tasks.find(
+      const matchedTask = tasks.find(
         (t) => t.elderId === an.elderId && t.caregiverId === an.caregiverId && (t.status === "risk" || t.status === "refused"),
       );
       if (!matchedTask) return;
@@ -1974,8 +3388,8 @@ function buildDirectorExceptionReports(_tasks = state.tasks, opts = {}) {
       reports.push({
         id: an.id,
         title: matchedTask.title || an.type || "异常报备",
-        schedule: an.time || an.reportedAt || "",
-        window: an.time || "",
+        schedule: matchedTask.schedule || matchedTask.window || "",
+        window: matchedTask.window || matchedTask.schedule || "",
         status: matchedTask.status || "risk",
         statusLabel: an.type === "老人不配合" ? "不配合" : "异常",
         elderName: elder?.name || "未知老人",
@@ -1983,17 +3397,18 @@ function buildDirectorExceptionReports(_tasks = state.tasks, opts = {}) {
         floor: elder?.floor || "--",
         caregiverName: caregiver?.name || "未分配护工",
         note: an.note || "未填写文字说明",
-        evidence: matchedTask.recordEvidence || matchedTask.exceptionEvidence || [],
-        reportedAt: an.time || an.reportedAt || "",
+        evidence: evidenceArray(matchedTask.recordEvidence).length
+          ? evidenceArray(matchedTask.recordEvidence)
+          : evidenceArray(matchedTask.exceptionEvidence),
+        evidencePending: taskNeedsEvidenceHydration(matchedTask),
+        reportedAt: an.reportedAt || an.time || matchedTask.exceptionReportedAt || matchedTask.updatedAt || "",
         anomalyId: an.id,
       });
     });
 
-  state.tasks.forEach((task) => {
+  tasks.forEach((task) => {
     if (task.status !== "risk" && task.status !== "refused") return;
     if (coveredPairs[(task.elderId || "") + "|" + (task.caregiverId || "")]) return;
-    if (opts.readOnly) { if (!readIds.has(task.id)) return; }
-    else { if (readIds.has(task.id)) return; }
     const elder = getElderById(task.elderId);
     const caregiver = getCaregiverById(task.caregiverId);
     reports.push({
@@ -2008,7 +3423,8 @@ function buildDirectorExceptionReports(_tasks = state.tasks, opts = {}) {
       floor: elder ? elder.floor : "--",
       caregiverName: caregiver ? caregiver.name : "未分配护工",
       note: task.exceptionNote || task.recordNote || "未填写文字说明",
-      evidence: task.recordEvidence || [],
+      evidence: evidenceArray(task.recordEvidence).length ? evidenceArray(task.recordEvidence) : evidenceArray(task.exceptionEvidence),
+      evidencePending: taskNeedsEvidenceHydration(task),
       reportedAt: task.exceptionReportedAt || task.updatedAt || task.createdAt || "",
       anomalyId: task.id,
     });
@@ -2023,6 +3439,9 @@ export function subscribe(listener) {
 }
 
 export const actions = {
+  bindSessionUserToState(user = state.session.user) {
+    return bindSessionUserToState(user);
+  },
   toggleLoginMenu() {
     state.ui.loginMenuOpen = !state.ui.loginMenuOpen;
     notify();
@@ -2158,16 +3577,19 @@ export const actions = {
       return false;
     }
 
-    const snapshot = buildInstitutionStateSnapshot();
     try {
-      const response = await uploadInstitutionState(snapshot);
-      const applied = normalizeInstitutionStateSnapshot(response);
-      state.cloud.institutionStateFetchedAt = applied?.updatedAt || response?.fetchedAt || snapshot.updatedAt;
+      const institutionId = getCurrentSessionInstitutionId();
+      await Promise.all([
+        actions._loadCloudInstitutionInfo(institutionId),
+        actions._loadCloudPersonnel(institutionId),
+        actions.refreshDailyReportTemplates({ silent: true }),
+      ]);
+      state.cloud.institutionStateFetchedAt = `${formatNowDate()} ${formatNowTime()}`;
       state.cloud.institutionStateError = "";
-      if (!options.silent) touchToast("整院共享数据已同步云端");
+      if (!options.silent) touchToast("整院事实表已刷新");
       return true;
     } catch (error) {
-      state.cloud.institutionStateError = error?.message || "整院共享数据同步失败";
+      state.cloud.institutionStateError = error?.message || "整院事实表刷新失败";
       if (!options.silent) touchToast(state.cloud.institutionStateError);
       return false;
     }
@@ -2177,23 +3599,111 @@ export const actions = {
     if (options.silent && (isReportTemplateWorkspaceOpen() || state.ui.directorPersonnelDraft || state.ui.directorDispatchDraft)) {
       return false;
     }
+    if (institutionStateRefreshInFlight) {
+      return institutionStateRefreshInFlight;
+    }
 
+    institutionStateRefreshInFlight = (async () => {
+      try {
+        const institutionId = getCurrentSessionInstitutionId();
+        if (options.checkStatus !== false) {
+          const syncStatus = await checkCloudSyncDomains(["personnel", "templates"], {
+            institutionId,
+            recordDate: options.recordDate || state.director?.date || formatNowDate(),
+          });
+          if (
+            syncStatus &&
+            !syncDomainChanged(syncStatus, "personnel") &&
+            !syncDomainChanged(syncStatus, "templates")
+          ) {
+            state.cloud.institutionStateFetchedAt = `${formatNowDate()} ${formatNowTime()}`;
+            state.cloud.institutionStateError = "";
+            return false;
+          }
+        }
+        const before = JSON.stringify({
+          institution: state.institution,
+          caregivers: state.caregivers,
+          elders: state.elders,
+          templates: state.dailyReportTemplates,
+        });
+        await Promise.all([
+          actions._loadCloudInstitutionInfo(institutionId),
+          actions._loadCloudPersonnel(institutionId),
+          actions.refreshDailyReportTemplates({ silent: true }),
+        ]);
+        const after = JSON.stringify({
+          institution: state.institution,
+          caregivers: state.caregivers,
+          elders: state.elders,
+          templates: state.dailyReportTemplates,
+        });
+        const changed = before !== after;
+        state.cloud.institutionStateFetchedAt = `${formatNowDate()} ${formatNowTime()}`;
+        state.cloud.institutionStateError = "";
+        if (changed && !options.silent) {
+          touchToast("整院事实表已刷新");
+        } else if (changed) {
+          notify();
+        }
+        return changed;
+      } catch (error) {
+        state.cloud.institutionStateError = error?.message || "整院事实表拉取失败";
+        if (!options.silent) {
+          touchToast(state.cloud.institutionStateError);
+        }
+        return false;
+      } finally {
+        institutionStateRefreshInFlight = null;
+      }
+    })();
+
+    return institutionStateRefreshInFlight;
+  },
+  async refreshAttendanceRecords(options = {}) {
+    if (state.session.identity === "caregiver") {
+      bindCurrentCaregiverFromSession();
+    }
+    const institutionId = options.institutionId || getCurrentSessionInstitutionId();
+    const caregiverId = options.caregiverId || state.caregiver?.id || "";
+    if (!institutionId || !caregiverId) return false;
+
+    ensureAttendanceState();
+    state.cloud.attendanceLoading = true;
+    if (!options.silent) notify();
     try {
-      const response = await fetchInstitutionState({ institutionId: state.institution.id });
-      const changed = applyInstitutionStateSnapshot(response);
-      state.cloud.institutionStateFetchedAt = response?.fetchedAt || state.cloud.institutionStateFetchedAt || "";
-      state.cloud.institutionStateError = "";
-      if (changed && !options.silent) {
-        touchToast("整院共享数据已刷新");
-      } else if (changed) {
-        notify();
-      }
-      return changed;
+      const response = await fetchAttendanceRecords({
+        institutionId,
+        caregiverId,
+        recordDate: options.recordDate || formatNowDate(),
+      });
+      const items = Array.isArray(response?.items) ? response.items : [];
+      items.forEach((item) => mergeAttendanceRecord(item));
+      state.cloud.attendanceFetchedAt = response?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`;
+      state.cloud.attendanceError = "";
+      return true;
     } catch (error) {
-      state.cloud.institutionStateError = error?.message || "整院共享数据拉取失败";
-      if (!options.silent) {
-        touchToast(state.cloud.institutionStateError);
-      }
+      state.cloud.attendanceError = error?.message || "考勤记录拉取失败";
+      if (!options.silent) touchToast(state.cloud.attendanceError);
+      return false;
+    } finally {
+      state.cloud.attendanceLoading = false;
+      if (!options.silent) notify();
+    }
+  },
+  async syncAttendanceRecord(record, options = {}) {
+    const payload = buildAttendancePayloadFromRecord(record);
+    if (!payload.institutionId || !payload.caregiverId) return false;
+    try {
+      const response = await upsertAttendanceRecord(payload);
+      if (response?.item) mergeAttendanceRecord(response.item);
+      state.cloud.attendanceFetchedAt = response?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`;
+      state.cloud.attendanceError = "";
+      if (!options.silent) notify();
+      return true;
+    } catch (error) {
+      state.cloud.attendanceError = error?.message || "考勤同步失败";
+      if (!options.silent) touchToast(state.cloud.attendanceError);
       return false;
     }
   },
@@ -2250,11 +3760,13 @@ export const actions = {
   },
   async _loadCloudPersonnel(instId) {
     try {
-      const [cgResp, usersResp] = await Promise.all([
+      const [cgResp, eldersResp, usersResp] = await Promise.all([
         fetchCaregivers({ institutionId: instId }),
+        fetchElders({ institutionId: instId }),
         fetchAuthUsers(instId),
       ]);
       const cgList = Array.isArray(cgResp) ? cgResp : [];
+      const elderList = Array.isArray(eldersResp) ? eldersResp : [];
       const users = Array.isArray(usersResp) ? usersResp : [];
       const merged = cgList.map((cg) => {
         const auth = users.find((u) => u.roleEntityId === cg.id && u.role === "caregiver");
@@ -2268,39 +3780,27 @@ export const actions = {
           status: cg.status || "on-duty",
           phone: cg.phone || "",
           username: auth?.username || "",
+          passwordHint: auth?.passwordHint || "",
           cloudUserId: auth?.id || "",
           cloudUserStatus: auth?.status || "",
         };
       });
       if (merged.length) {
-        state.caregivers = merged;
+        state.caregivers = dedupeCaregiverRecords(merged);
       } else {
         const caregiverUsers = users.filter((u) => u.role === "caregiver" && u.status === "active");
         if (caregiverUsers.length) {
           state.caregivers = state.caregivers.map((cg) => {
             const auth = caregiverUsers.find((u) => u.roleEntityId === cg.id);
-            if (auth) return { ...cg, username: auth.username, cloudUserId: auth.id, cloudUserStatus: auth.status };
+            if (auth) return { ...cg, username: auth.username, passwordHint: auth.passwordHint || "", cloudUserId: auth.id, cloudUserStatus: auth.status };
             return cg;
           });
         }
       }
       const familyUsers = users.filter((u) => u.role === "family" && u.status === "active");
+      mergeCloudEldersIntoState(elderList, familyUsers);
       if (familyUsers.length) {
-        const familyElders = familyUsers.map((u) => ({
-          id: u.roleEntityId || u.id,
-          name: u.displayName || u.username,
-          room: "",
-          bed: "",
-          floor: 1,
-          age: 0,
-          level: "",
-          username: u.username,
-          familyUserId: u.id,
-          familyUserStatus: u.status,
-        }));
-        const existingIds = new Set(state.elders.map((e) => e.id));
-        const newElders = familyElders.filter((e) => !existingIds.has(e.id));
-        if (newElders.length) state.elders = [...state.elders, ...newElders];
+        state.elders = attachFamilyAccountsToElders(state.elders, familyUsers);
       }
     } catch (_) {}
   },
@@ -2317,6 +3817,9 @@ export const actions = {
         actions.refreshDailyReportTemplates({ silent: true }),
         actions.refreshInstitutionSharedState({ silent: true }),
       ]);
+      if (state.institution.id) {
+        await actions._loadCloudPersonnel(state.institution.id);
+      }
       await actions.persistInstitutionSharedState({ silent: true });
 
       if (state.cloud.institutionStateFetchedAt) {
@@ -2357,10 +3860,9 @@ export const actions = {
     state.ui.appInfoDialog = "";
     state.ui.appUpdate.open = false;
 
-    const instId = result.user.institutionId;
+    const instId = bindSessionUserToState(result.user);
     if (instId) {
-      state.institution.id = instId;
-      actions._loadCloudInstitutionInfo(instId);
+      await actions._loadCloudInstitutionInfo(instId);
     }
 
     const role = result.user.role;
@@ -2368,17 +3870,26 @@ export const actions = {
       state.ui.route = "attendance";
       state.ui.activeTab = "home";
       const roleEntityId = result.user.roleEntityId;
+      state.caregiver = {};
       notify();
-      actions.refreshInstitutionSharedState({ silent: true });
       if (instId) await actions._loadCloudPersonnel(instId);
+      await actions.refreshInstitutionSharedState({ silent: true });
       if (roleEntityId) {
-        const matched = state.caregivers.find((c) => c.id === roleEntityId);
-        if (matched) state.caregiver = { ...matched };
+        bindCurrentCaregiverFromSession(result.user);
       }
-      if (!state.caregiver?.id) {
+      if (!state.caregiver?.id && !roleEntityId) {
         const cgName = result.user.displayName || result.user.username || "";
         const byName = state.caregivers.find((c) => c.name === cgName);
         if (byName) state.caregiver = { ...byName };
+      }
+      if (!state.caregiver?.id) {
+        setAuthToken("");
+        state.session.token = "";
+        state.session.user = null;
+        state.session.identity = "";
+        state.session.loggedIn = false;
+        state.ui.route = "login";
+        throw new Error("账号未绑定到当前养老院护工，请检查云端账号绑定");
       }
     } else if (role === "family") {
       state.ui.route = "family-home";
@@ -2399,13 +3910,15 @@ export const actions = {
       actions.loadDirectorInitialData();
     }
   },
-  clockIn() {
+  async clockIn() {
     state.session.loggedIn = true;
     state.session.clockInAt = formatNowTime();
+    const attendanceRecord = recordCurrentCaregiverClockIn();
     state.ui.route = "home";
     state.ui.activeTab = "home";
     touchToast(`上班打卡成功 ${state.session.clockInAt}`);
-    actions.refreshCaregiverCloudTasks({ silent: true });
+    await actions.syncAttendanceRecord(attendanceRecord, { silent: true });
+    actions.refreshCaregiverCloudTasks({ silent: true, ensureInstitutionState: true });
   },
   async logout() {
     try { await requestJson("/api/auth/logout", { method: "POST" }); } catch (_) {}
@@ -2454,6 +3967,16 @@ export const actions = {
       state.ui.directorInboxExportDate = "";
       state.ui.pendingCareRecordAction = "";
     }
+    if (route === "director-inventory" || route === "inventory-usage") {
+      actions.refreshCloudInventory({ silent: true });
+    }
+    if (route === "history") {
+      actions.refreshCaregiverCloudTasks({ silent: true, recordDate: getHistoryFilterRecordDate() });
+      actions.refreshCaregiverTaskRecords({ silent: true, recordDate: getHistoryFilterRecordDate() });
+    }
+    if (route === "attendance") {
+      actions.refreshAttendanceRecords({ silent: true });
+    }
     notify();
   },
   chooseFloor(value) {
@@ -2462,19 +3985,115 @@ export const actions = {
     state.ui.activeTab = "home";
     notify();
   },
-  chooseRoom(room) {
-    setCurrentRoom(room);
+  chooseRoom(elderId, room = "") {
+    setCurrentRoom(elderId, room);
+    state.ui.caregiverTimelineReadonly = false;
     state.ui.route = "elder-detail";
     state.ui.activeTab = "home";
     notify();
+  },
+  openCaregiverElderRecordTasks(elderId = "", taskId = "") {
+    const recordDate = getHistoryFilterRecordDate();
+    const report = findDailyReport(elderId, recordDate) || null;
+    const elder = getElderById(elderId) || createElderFallbackFromCareReport(report, elderId);
+    if (!elder) return;
+    state.ui.selectedElderId = elder.id;
+    state.ui.selectedRoom = elder.room;
+    state.ui.selectedFloor = normalizeFloorNumber(elder.floor, 1);
+    state.ui.selectedCaregiverReportElderId = elder.id;
+    state.ui.selectedCaregiverRecordTaskId = taskId || "";
+    state.ui.activeTab = "history";
+    notify();
+  },
+  openCaregiverInventoryUsage() {
+    state.ui.inventoryUsageDraft = {
+      itemId: (state.inventory || [])[0]?.id || "",
+      quantity: 1,
+      note: "",
+    };
+    state.ui.route = "inventory-usage";
+    state.ui.activeTab = "history";
+    notify();
+    actions.refreshCloudInventory({ silent: true });
+  },
+  openCaregiverInventoryUsageForElder(elderId = "") {
+    const elder = getElderById(elderId);
+    if (elder) {
+      state.ui.selectedElderId = elder.id;
+      state.ui.selectedRoom = elder.room;
+      state.ui.selectedFloor = elder.floor;
+    }
+    return actions.openCaregiverInventoryUsage();
+  },
+  closeCaregiverInventoryUsage() {
+    state.ui.inventoryUsageDraft = null;
+    state.ui.route = "history";
+    state.ui.activeTab = "history";
+    notify();
+  },
+  updateInventoryUsageDraft(patch = {}) {
+    state.ui.inventoryUsageDraft = {
+      ...(state.ui.inventoryUsageDraft || {}),
+      ...patch,
+    };
+    notify();
+  },
+  async submitInventoryUsage(input = {}) {
+    const draft = {
+      ...(state.ui.inventoryUsageDraft || {}),
+      ...input,
+    };
+    const item = getInventoryItemById(draft.itemId);
+    const quantity = Math.max(0, Number(draft.quantity || 0));
+    if (!item) {
+      touchToast("请选择库存物品");
+      return;
+    }
+    if (!quantity) {
+      touchToast("请输入使用数量");
+      return;
+    }
+    if (quantity > item.quantity) {
+      touchToast("库存数量不足");
+      return;
+    }
+    if (!isCloudSyncConfigured()) {
+      touchToast("云端接口未配置，无法记录库存使用");
+      return;
+    }
+    try {
+      const response = await createInventoryUsage({
+        institutionId: getCurrentSessionInstitutionId(),
+        itemId: item.id,
+        quantity,
+        caregiverId: state.caregiver.id,
+        caregiverName: state.caregiver.name,
+        note: draft.note || "",
+        usedAt: `${formatNowDate()} ${formatNowTime()}`,
+      });
+      mergeInventoryItems(response?.inventoryItem ? [response.inventoryItem] : []);
+      mergeInventoryUsages(response?.item ? [response.item] : []);
+      setCloudInventoryFetchedAt(response?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`);
+      setCloudInventoryError("");
+      state.ui.inventoryUsageDraft = null;
+      state.ui.route = "history";
+      state.ui.activeTab = "history";
+      touchToast("库存使用已同步");
+      notify();
+    } catch (error) {
+      setCloudInventoryError(error?.message || "库存使用同步失败");
+      touchToast(error?.message || "库存使用同步失败");
+    }
   },
   openCaregiverDailyReport(elderId) {
     const elder = getElderById(elderId);
     if (!elder) return;
 
-    const existingReport = findDailyReport(elder.id);
+    const recordDate = getHistoryFilterRecordDate();
+    const existingReport = findDailyReport(elder.id, recordDate);
     state.ui.selectedCaregiverReportElderId = elder.id;
     state.ui.caregiverDailyReportDraft = buildCaregiverDailyReportDraft(elder.id, existingReport);
+    state.ui.caregiverDailyReportDraft.recordDate = recordDate;
     state.ui.route = "caregiver-daily-report";
     state.ui.activeTab = "home";
     notify();
@@ -2521,7 +4140,7 @@ export const actions = {
     }
 
     state.ui.selectedTaskId = taskId;
-    const elder = getElderById(task.elderId);
+    const elder = getElderById(task.elderId) || createTaskElderFallback(task);
     if (elder) {
       state.ui.selectedElderId = elder.id;
       state.ui.selectedRoom = elder.room;
@@ -2540,7 +4159,7 @@ export const actions = {
     }
 
     state.ui.selectedTaskId = taskId;
-    const elder = getElderById(task.elderId);
+    const elder = getElderById(task.elderId) || createTaskElderFallback(task);
     if (elder) {
       state.ui.selectedElderId = elder.id;
       state.ui.selectedRoom = elder.room;
@@ -2588,13 +4207,21 @@ export const actions = {
             capturedAt: evidence.capturedAt || formatNowTime(),
           },
     );
+    if (!nextEvidence?.dataUrl) {
+      touchToast("照片未读取成功，请重新拍照或选择图片");
+      return;
+    }
     state.ui[storeKey][key] = [...currentList, nextEvidence].slice(0, 6);
     if (kind === "quick") {
       const quickTask = state.tasks.find(
         (t) => t.elderId === key && t.source === "quick-exception" && t.status === "risk",
       );
       if (quickTask) {
-        syncCaregiverTaskToCloud(quickTask, "快速异常照片云端同步失败").catch(() => {});
+        quickTask.recordEvidence = normalizeEvidenceList(state.ui[storeKey][key]);
+        quickTask.exceptionEvidence = quickTask.recordEvidence;
+        syncCaregiverTaskToCloud(quickTask, "快速异常照片云端同步失败")
+          .then(() => refreshCareRecordFromTask(quickTask, { source: "caregiver-quick-exception-photo" }))
+          .catch(() => {});
       }
     }
     touchToast(kind === "exception" || kind === "quick" ? "异常照片已保存" : "照片已保存到记录");
@@ -2642,6 +4269,10 @@ export const actions = {
       touchToast("只能处理分配给自己的任务");
       return;
     }
+    if (taskHasExceptionReport(task)) {
+      touchToast("该任务已选择异常上报，不能再添加普通记录");
+      return;
+    }
     state.ui.taskRecordDialog = {
       taskId,
       type: "record",
@@ -2654,6 +4285,10 @@ export const actions = {
     if (!task) return;
     if (task.caregiverId !== state.caregiver.id) {
       touchToast("只能处理分配给自己的任务");
+      return;
+    }
+    if (taskHasRecordReport(task)) {
+      touchToast("该任务已选择记录上报，不能再添加异常上报");
       return;
     }
     state.ui.taskRecordDialog = {
@@ -2684,6 +4319,8 @@ export const actions = {
   async saveTaskRecordDialog(payload = {}) {
     const dialog = state.ui.taskRecordDialog;
     if (!dialog) return;
+    if (dialog.saving) return;
+    dialog.saving = true;
 
     if (dialog.type === "quick") {
       const elder = getElderById(dialog.elderId);
@@ -2723,7 +4360,9 @@ export const actions = {
         };
         state.tasks.push(quickTask);
         refreshDirectorOverview();
-        syncCaregiverTaskToCloud(quickTask, "快速异常云端同步失败").catch(() => {});
+        syncCaregiverTaskToCloud(quickTask, "快速异常云端同步失败")
+          .then(() => refreshCareRecordFromTask(quickTask, { source: "caregiver-quick-exception" }))
+          .catch(() => {});
       }
       state.ui.taskRecordDialog = null;
       notify();
@@ -2747,14 +4386,25 @@ export const actions = {
     state.ui.taskExceptionNotes = state.ui.taskExceptionNotes || {};
     state.ui.taskExceptionSaved = state.ui.taskExceptionSaved || {};
     if (dialog.type === "exception") {
+      if (taskHasRecordReport(task)) {
+        dialog.saving = false;
+        touchToast("该任务已选择记录上报，不能再添加异常上报");
+        notify();
+        return;
+      }
+      const exceptionEvidence = normalizeEvidenceList(state.ui.taskExceptionEvidence?.[task.id]);
+      if (exceptionEvidence.length && !evidenceListHasImageData(exceptionEvidence)) {
+        dialog.saving = false;
+        touchToast("异常照片未同步，请重新拍照或选择图片");
+        return;
+      }
       state.ui.taskExceptionNotes[task.id] = note;
       task.status = "risk";
       task.exceptionNote = note;
       task.exceptionType = "异常情况";
-      task.recordEvidence = (state.ui.taskExceptionEvidence && state.ui.taskExceptionEvidence[task.id]) || [];
+      task.exceptionEvidence = exceptionEvidence;
       task.exceptionReportedAt = `${formatNowDate()} ${formatNowTime()}`;
       if (!state.ui.taskExceptionSaved[task.id]) {
-        addAnomaly(task, "异常情况", note || `${task.title}执行中发现异常，已同步上报。`);
         appendHistoryRecord(task, "异常", note || "护理过程中发现异常情况，已同步上报。", "异常情况已记录。");
         state.ui.taskExceptionSaved[task.id] = true;
       }
@@ -2762,15 +4412,35 @@ export const actions = {
       state.ui.taskRecordDialog = null;
       notify();
       touchToast("异常已上报");
-      syncCaregiverTaskToCloud(task, "异常任务云端同步失败").catch(() => {});
+      syncCaregiverTaskToCloud(task, "异常任务云端同步失败")
+        .then(() => refreshCareRecordFromTask(task, { source: "caregiver-task-exception" }))
+        .catch(() => {});
       return;
     }
 
+    if (taskHasExceptionReport(task)) {
+      dialog.saving = false;
+      touchToast("该任务已选择异常上报，不能再添加普通记录");
+      notify();
+      return;
+    }
     state.ui.taskRecordNotes[task.id] = note;
+    const recordEvidence = normalizeEvidenceList(state.ui.taskRecordEvidence?.[task.id] || state.ui.taskEvidence?.[task.id]);
+    if (recordEvidence.length && !evidenceListHasImageData(recordEvidence)) {
+      dialog.saving = false;
+      touchToast("记录照片未同步，请重新拍照或选择图片");
+      return;
+    }
     task.recordNote = note;
+    if (recordEvidence.length) {
+      task.recordEvidence = recordEvidence;
+    }
     task.recordUpdatedAt = `${formatNowDate()} ${formatNowTime()}`;
     appendHistoryRecord(task, "记录", note || `${task.title}已补充文字记录。`);
     state.ui.taskRecordDialog = null;
+    syncCaregiverTaskToCloud(task, "文字记录云端同步失败")
+      .then(() => refreshCareRecordFromTask(task, { source: "caregiver-task-note" }))
+      .catch(() => {});
     touchToast("记录已保存");
   },
   completeTask(taskId) {
@@ -2780,14 +4450,25 @@ export const actions = {
       touchToast("只能处理分配给自己的任务");
       return;
     }
+    if (taskHasExceptionReport(task)) {
+      touchToast("该任务已异常上报，不能再标记完成");
+      return;
+    }
     if (task.status === "completed") {
       task.status = "pending";
+      task.completedAt = "";
       refreshDirectorOverview();
-      syncCaregiverTaskToCloud(task, "任务取消打卡云端同步失败").catch(() => {});
+      syncCaregiverTaskToCloud(task, "任务取消打卡云端同步失败")
+        .then(() => refreshCareRecordFromTask(task, { source: "caregiver-task-uncomplete" }))
+        .catch(() => {});
       touchToast("已取消打卡");
       return;
     }
     const recordEvidence = normalizeEvidenceList(state.ui.taskRecordEvidence?.[taskId] || state.ui.taskEvidence?.[taskId]);
+    if (recordEvidence.length && !evidenceListHasImageData(recordEvidence)) {
+      touchToast("照片未同步，请重新拍照或选择图片");
+      return;
+    }
     if (task.requirePhoto && !recordEvidence.length) {
       touchToast("请先拍照或选择留痕图片");
       return;
@@ -2799,20 +4480,9 @@ export const actions = {
     task.recordEvidence = recordEvidence;
     appendHistoryRecord(task, "已完成", state.ui.taskRecordNotes?.[taskId] || state.ui.taskNotes?.[taskId] || `${task.title}已完成，并已留痕记录。`);
     refreshDirectorOverview();
-    syncCaregiverTaskToCloud(task, "任务完成状态云端同步失败").catch(() => {});
-    if (isCloudSyncConfigured()) {
-      createTaskCompletion({
-        taskId: task.id,
-        caregiverId: task.caregiverId,
-        elderId: task.elderId,
-        recordDate: `${formatNowDate()}`,
-        floor: task.elderFloor || 1,
-        completedAt: task.completedAt,
-        type: recordEvidence.length ? "detailed" : "check",
-        note: task.recordNote || "",
-        photos: recordEvidence,
-      }).catch(() => {});
-    }
+    syncCaregiverTaskToCloud(task, "任务完成状态云端同步失败")
+      .then(() => refreshCareRecordFromTask(task, { source: "caregiver-task-completion" }))
+      .catch(() => {});
     touchToast("打卡记录成功");
   },
   openCaregiverTimelineFullscreen() {
@@ -2830,24 +4500,34 @@ export const actions = {
       touchToast("只能处理分配给自己的任务");
       return;
     }
+    if (taskHasRecordReport(task)) {
+      touchToast("该任务已选择记录上报，不能再添加异常上报");
+      return;
+    }
     if (type === "risk") {
       actions.openTaskExceptionDialog(taskId);
       return;
     }
     if (type === "refused") {
       task.status = "refused";
-      addAnomaly(task, "老人不配合", `${task.title}执行时老人拒绝配合，建议稍后再次处理。`);
+      task.exceptionNote = `${task.title}执行时老人拒绝配合，建议稍后再次处理。`;
+      task.exceptionType = "老人不配合";
+      task.exceptionReportedAt = `${formatNowDate()} ${formatNowTime()}`;
       appendHistoryRecord(task, "老人不配合", "老人情绪波动，暂时拒绝配合护理。", "已记录老人不配合原因。");
       touchToast("已记录不配合原因");
     } else {
       task.status = "risk";
-      addAnomaly(task, "身体不适", `${task.title}执行中发现老人状态异常，已同步上报。`);
+      task.exceptionNote = `${task.title}执行中发现老人状态异常，已同步上报。`;
+      task.exceptionType = "身体不适";
+      task.exceptionReportedAt = `${formatNowDate()} ${formatNowTime()}`;
       appendHistoryRecord(task, "异常", "护理过程中发现异常情况，已同步上报。", "异常情况已上报，等待后续处理。");
       touchToast("异常上报成功，请补充留痕");
     }
 
     refreshDirectorOverview();
-    syncCaregiverTaskToCloud(task, "异常任务云端同步失败").catch(() => {});
+    syncCaregiverTaskToCloud(task, "异常任务云端同步失败")
+      .then(() => refreshCareRecordFromTask(task, { source: "caregiver-task-exception" }))
+      .catch(() => {});
     notify();
   },
   toggleMessageRead(id) {
@@ -2872,6 +4552,58 @@ export const actions = {
   },
   setHistorySearch(value) {
     state.ui.historyFilter.search = value;
+    notify();
+  },
+  setCareRecordDate(value) {
+    const nextDate = /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) ? value : formatNowDate();
+    state.ui.historyFilter.time = nextDate;
+    actions.refreshCaregiverCloudTasks({ silent: true, recordDate: nextDate });
+    actions.refreshCaregiverTaskRecords({ silent: true, recordDate: nextDate });
+    notify();
+  },
+  closeCaregiverRecordDetail() {
+    state.ui.selectedCaregiverReportElderId = "";
+    state.ui.selectedCaregiverRecordTaskId = "";
+    state.ui.caregiverRecordPhotoPreviewIndex = null;
+    state.ui.caregiverRecordPhotoPreviewTaskId = "";
+    notify();
+  },
+  async openCaregiverRecordPhotoPreview(taskId = "", index = "0") {
+    const normalizedTaskId = String(taskId || state.ui.selectedCaregiverRecordTaskId || "");
+    const photoIndex = Number.parseInt(index, 10) || 0;
+    if (!normalizedTaskId) return;
+
+    state.ui.caregiverRecordEvidenceByTaskId = state.ui.caregiverRecordEvidenceByTaskId || {};
+    let evidence = normalizeEvidenceList(state.ui.caregiverRecordEvidenceByTaskId[normalizedTaskId]);
+    if (!evidence.some((item) => item.dataUrl || item.url)) {
+      try {
+        const detail = await requestJson("/api/tasks/" + encodeURIComponent(normalizedTaskId));
+        const item = detail?.item || {};
+        evidence = [
+          ...normalizeEvidenceList(item.recordEvidence || item.record_evidence),
+          ...normalizeEvidenceList(item.exceptionEvidence || item.exception_evidence),
+        ].filter((entry) => entry.dataUrl || entry.url);
+        if (evidence.length) {
+          state.ui.caregiverRecordEvidenceByTaskId[normalizedTaskId] = evidence;
+        }
+      } catch (error) {
+        touchToast(error?.message || "图片读取失败");
+        return;
+      }
+    }
+
+    if (!evidence.length) {
+      touchToast("该任务卡没有图片");
+      return;
+    }
+
+    state.ui.caregiverRecordPhotoPreviewTaskId = normalizedTaskId;
+    state.ui.caregiverRecordPhotoPreviewIndex = Math.min(photoIndex, evidence.length - 1);
+    notify();
+  },
+  closeCaregiverRecordPhotoPreview() {
+    state.ui.caregiverRecordPhotoPreviewIndex = null;
+    state.ui.caregiverRecordPhotoPreviewTaskId = "";
     notify();
   },
   selectHistory(id) {
@@ -2938,6 +4670,29 @@ export const actions = {
     state.ui.directorPersonnelFloor = Math.min(5, Math.max(1, Number.parseInt(value, 10) || 1));
     notify();
   },
+  setDirectorAttendanceShift(value = "all") {
+    ensureAttendanceState();
+    const valid = new Set(["all", ...state.attendance.shiftTemplates.map((shift) => shift.id)]);
+    state.ui.selectedAttendanceShift = valid.has(value) ? value : "all";
+    notify();
+  },
+  toggleAttendanceShiftSettings() {
+    ensureAttendanceState();
+    state.ui.attendanceShiftSettingsOpen = !state.ui.attendanceShiftSettingsOpen;
+    notify();
+  },
+  updateAttendanceShiftTemplate(shiftId, patch = {}) {
+    ensureAttendanceState();
+    const target = state.attendance.shiftTemplates.find((shift) => shift.id === shiftId);
+    if (!target) return;
+    const start = String(patch.start || target.start || "").slice(0, 5);
+    const end = String(patch.end || target.end || "").slice(0, 5);
+    if (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)) return;
+    target.start = start;
+    target.end = end;
+    notify();
+    actions.persistInstitutionSharedState({ silent: true });
+  },
   closeDirectorPersonnelDraft() {
     state.ui.directorPersonnelDraft = null;
     notify();
@@ -2946,6 +4701,8 @@ export const actions = {
     const draft = state.ui.directorPersonnelDraft;
     if (!draft) return;
 
+    const previousElder =
+      draft.type === "elder" && draft.mode === "edit" ? JSON.parse(JSON.stringify(getElderById(draft.id) || null)) : null;
     const saved =
       draft.mode === "edit"
         ? draft.type === "elder"
@@ -2956,41 +4713,115 @@ export const actions = {
           : actions.addCaregiver(input);
     if (!saved) return;
 
-    state.ui.directorPersonnelDraft = null;
-    notify();
+    if (draft.type === "elder" && draft.mode === "edit" && isCloudSyncConfigured()) {
+      const elder = getElderById(draft.id);
+      if (elder) {
+        try {
+          await updateCloudElder(
+            elder.id,
+            {
+              name: elder.name,
+              gender: elder.gender,
+              age: elder.age,
+              floor: elder.floor,
+              room: elder.room,
+              bed: elder.bed,
+              level: elder.level,
+              reportTemplateId: elder.reportTemplateId,
+              reportTemplateTitle: elder.reportTemplateTitle,
+              assignedCaregiverId: elder.assignedCaregiverId || "",
+              tags: elder.tags || [],
+              familyContact: elder.familyContact || "",
+              familyPhone: elder.familyPhone || "",
+            },
+            { institutionId: state.institution.id },
+          );
+          await actions._loadCloudPersonnel(state.institution.id);
+        } catch (error) {
+          if (previousElder) Object.assign(elder, previousElder);
+          notify();
+          touchToast(error?.message || "老人档案云端保存失败");
+          return;
+        }
+      }
+    }
 
-    if (draft.type === "caregiver" && (draft.mode === "create" || draft.mode === "edit") && input.username && input.password) {
+    if (draft.type === "caregiver" && draft.mode === "edit" && isCloudSyncConfigured()) {
+      const caregiver = getCaregiverById(draft.id);
+      if (caregiver) {
+        try {
+          await updateCloudCaregiver(caregiver.id, {
+            name: caregiver.name,
+            employeeNo: caregiver.employeeNo || "",
+            floor: caregiver.floor,
+            shift: caregiver.shift || "",
+            phone: caregiver.phone || "",
+          });
+          await actions._loadCloudPersonnel(state.institution.id);
+        } catch (error) {
+          touchToast(error?.message || "护工档案云端保存失败");
+          return;
+        }
+      }
+    }
+
+    const caregiverUsernameInput = String(input.username || "").trim();
+    const caregiverPasswordInput = String(input.password || "");
+    if (draft.type === "caregiver" && (draft.mode === "create" || draft.mode === "edit") && (caregiverUsernameInput || caregiverPasswordInput)) {
       const caregiver = draft.mode === "edit"
         ? getCaregiverById(draft.id)
-        : state.caregivers.find((c) => c.username === input.username && !c.cloudUserId);
-      if (caregiver && !caregiver.cloudUserId) {
+        : state.caregivers.find((c) => c.username === caregiverUsernameInput && !c.cloudUserId);
+      if (caregiver && !caregiver.cloudUserId && caregiverUsernameInput && caregiverPasswordInput) {
         try {
           const result = await createAuthUser({
-            username: input.username,
-            password: input.password,
-            displayName: input.name || input.username,
+            username: caregiverUsernameInput,
+            password: caregiverPasswordInput,
+            displayName: input.name || caregiverUsernameInput,
             role: "caregiver",
             roleEntityId: caregiver.id,
           });
           caregiver.cloudUserId = result.user.id;
           caregiver.cloudUserStatus = result.user.status;
+          caregiver.username = result.user.username || caregiverUsernameInput;
+          caregiver.passwordHint = result.user.passwordHint || caregiverPasswordInput;
           notify();
         } catch (error) {
           touchToast("云端账号创建失败：" + (error.message || "网络错误"));
         }
+      } else if (caregiver && caregiver.cloudUserId) {
+        try {
+          const payload = {
+            displayName: input.name || caregiverUsernameInput || caregiver.name,
+            roleEntityId: caregiver.id,
+            status: "active",
+          };
+          if (caregiverUsernameInput) payload.username = caregiverUsernameInput;
+          if (caregiverPasswordInput) payload.password = caregiverPasswordInput;
+          const result = await updateAuthUser(caregiver.cloudUserId, {
+            ...payload,
+          });
+          caregiver.username = result.user?.username || caregiverUsernameInput || caregiver.username;
+          caregiver.cloudUserStatus = result.user?.status || "active";
+          if (caregiverPasswordInput) caregiver.passwordHint = result.user?.passwordHint || caregiverPasswordInput;
+          notify();
+        } catch (error) {
+          touchToast("云端账号更新失败：" + (error.message || "网络错误"));
+        }
       }
     }
 
-    if (draft.type === "elder" && (draft.mode === "create" || draft.mode === "edit") && input.username && input.password) {
+    const familyUsernameInput = String(input.username || "").trim();
+    const familyPasswordInput = String(input.password || "");
+    if (draft.type === "elder" && (draft.mode === "create" || draft.mode === "edit") && (familyUsernameInput || familyPasswordInput)) {
       const elder = draft.mode === "edit"
         ? getElderById(draft.id)
-        : state.elders.find((e) => e.username === input.username && !e.familyUserId);
-      if (elder && !elder.familyUserId) {
+        : state.elders.find((e) => e.username === familyUsernameInput && !e.familyUserId);
+      if (elder && !elder.familyUserId && familyUsernameInput && familyPasswordInput) {
         try {
           const result = await createAuthUser({
-            username: input.username,
-            password: input.password,
-            displayName: input.name || input.username,
+            username: familyUsernameInput,
+            password: familyPasswordInput,
+            displayName: input.name || familyUsernameInput,
             role: "family",
             roleEntityId: elder.id,
           });
@@ -3000,8 +4831,29 @@ export const actions = {
         } catch (error) {
           touchToast("家属账号创建失败：" + (error.message || "网络错误"));
         }
+      } else if (elder && elder.familyUserId) {
+        try {
+          const payload = {
+            displayName: input.name || familyUsernameInput || elder.name,
+            roleEntityId: elder.id,
+            status: "active",
+          };
+          if (familyUsernameInput) payload.username = familyUsernameInput;
+          if (familyPasswordInput) payload.password = familyPasswordInput;
+          const result = await updateAuthUser(elder.familyUserId, {
+            ...payload,
+          });
+          elder.username = result.user?.username || familyUsernameInput || elder.username;
+          elder.familyUserStatus = result.user?.status || "active";
+          notify();
+        } catch (error) {
+          touchToast("家属账号更新失败：" + (error.message || "网络错误"));
+        }
       }
     }
+
+    state.ui.directorPersonnelDraft = null;
+    notify();
 
     await actions.persistInstitutionSharedState({ silent: true });
 
@@ -3022,7 +4874,9 @@ export const actions = {
       employeeNo: String(input.employeeNo || "").trim() || `YG${String(state.caregivers.length + 1).padStart(3, "0")}`,
       floor,
       shift: String(input.shift || "").trim() || "07:00 - 15:30",
-      status: input.status === "on-duty" ? "on-duty" : "off-duty",
+      defaultShiftId: String(input.defaultShiftId || "").trim() || "morning",
+      shiftIds: [String(input.defaultShiftId || "").trim() || "morning"],
+      status: "off-duty",
       username: String(input.username || "").trim(),
       cloudUserId: "",
       cloudUserStatus: "",
@@ -3048,7 +4902,8 @@ export const actions = {
     caregiver.employeeNo = String(input.employeeNo || "").trim() || caregiver.employeeNo;
     caregiver.floor = Math.min(5, Math.max(1, Number.parseInt(input.floor, 10) || caregiver.floor || 1));
     caregiver.shift = String(input.shift || "").trim() || caregiver.shift || "07:00 - 15:30";
-    caregiver.status = input.status === "on-duty" ? "on-duty" : "off-duty";
+    caregiver.defaultShiftId = String(input.defaultShiftId || "").trim() || caregiver.defaultShiftId || "morning";
+    caregiver.shiftIds = [caregiver.defaultShiftId];
     if (input.username !== undefined) caregiver.username = String(input.username || "").trim();
 
     if (state.caregiver.id === caregiver.id) {
@@ -3251,91 +5106,28 @@ export const actions = {
     state.ui.directorPersonnelPlanDetailElderId = "";
     notify();
   },
-  markExceptionRead(taskId) {
-    if (!taskId) return;
-    if (!state.ui.directorReadExceptionIds) state.ui.directorReadExceptionIds = [];
-    if (!state.ui.directorReadExceptionIds.includes(taskId)) {
-      state.ui.directorReadExceptionIds.push(taskId);
-    }
-    touchToast("已标记为已读");
-  },
-  restoreReadException(taskId) {
-    if (!taskId) return;
-    state.ui.directorReadExceptionIds = (state.ui.directorReadExceptionIds || []).filter((id) => id !== taskId);
-    touchToast("已恢复为未读");
-  },
-  deleteReadException(anomalyId) {
-    if (!anomalyId) return;
-    const anomaly = (state.anomalies || []).find((a) => a.id === anomalyId);
-    if (anomaly) {
-      const matchedTask = state.tasks.find(
-        (t) => t.elderId === anomaly.elderId && t.caregiverId === anomaly.caregiverId && (t.status === "risk" || t.status === "refused"),
-      );
-      if (matchedTask) {
-        matchedTask.status = "pending";
-        if (isCloudSyncConfigured()) {
-          uploadPublishedTask(serializeCloudTask(matchedTask, "director-app")).catch(() => {});
-        }
-      }
-      if (isCloudSyncConfigured()) {
-        updateAnomaly(anomalyId, { status: "已处理", resolvedAt: `${formatNowDate()} ${formatNowTime()}` }).catch(() => {});
-      }
-    } else {
-      const riskTask = state.tasks.find((t) => t.id === anomalyId && (t.status === "risk" || t.status === "refused"));
-      if (riskTask) {
-        riskTask.status = "pending";
-        if (isCloudSyncConfigured()) {
-          uploadPublishedTask(serializeCloudTask(riskTask, "director-app")).catch(() => {});
-        }
-      }
-    }
-    state.ui.directorReadExceptionIds = (state.ui.directorReadExceptionIds || []).filter((id) => id !== anomalyId);
-    touchToast("已删除");
-  },
-  deleteAllReadExceptions() {
-    const readIds = (state.ui.directorReadExceptionIds || []).slice();
-    if (!readIds.length) {
-      touchToast("没有已读记录");
-      return;
-    }
-    if (!window.confirm(`确认删除全部 ${readIds.length} 条已读记录？`)) return;
-    for (const id of readIds) {
-      const anomaly = (state.anomalies || []).find((a) => a.id === id);
-      if (anomaly) {
-        const matchedTask = state.tasks.find(
-          (t) => t.elderId === anomaly.elderId && t.caregiverId === anomaly.caregiverId && (t.status === "risk" || t.status === "refused"),
-        );
-        if (matchedTask) {
-          matchedTask.status = "pending";
-          if (isCloudSyncConfigured()) {
-            uploadPublishedTask(serializeCloudTask(matchedTask, "director-app")).catch(() => {});
-          }
-        }
-        if (isCloudSyncConfigured()) {
-          updateAnomaly(id, { status: "已处理", resolvedAt: `${formatNowDate()} ${formatNowTime()}` }).catch(() => {});
-        }
-      } else {
-        const rt = state.tasks.find((x) => x.id === id && (x.status === "risk" || x.status === "refused"));
-        if (rt) {
-          rt.status = "pending";
-          if (isCloudSyncConfigured()) {
-            uploadPublishedTask(serializeCloudTask(rt, "director-app")).catch(() => {});
-          }
-        }
-      }
-    }
-    state.ui.directorReadExceptionIds = [];
-    touchToast(`已删除 ${readIds.length} 条记录`);
-  },
-  openDailyReportTemplateEditor(draft) {
-    const source = draft || Object.values(state.dailyReportTemplates || {})[0];
-    state.ui.directorReportTemplateDraft = createDailyReportTemplateDraft(source);
-    state.ui.directorReportTemplateEditingId = source?.id || "";
+  openDailyReportTemplateEditor(draft, options = {}) {
+    const shouldEditExisting = Boolean(options.editExisting && draft?.id);
+    state.ui.directorReportTemplateDraft = shouldEditExisting
+      ? createDailyReportTemplateDraft(draft)
+      : createBlankDailyReportTemplateDraft();
+    state.ui.directorReportTemplateEditingId = shouldEditExisting ? draft.id : "";
     state.ui.directorReportTemplateTransient = { newSectionTitle: "", newItems: {} };
     state.ui.directorReportTemplatePreviewOpen = false;
     state.ui.directorReportTemplatePreviewZoom = 1;
     state.ui.directorReportTemplateScheduleSectionId = "";
     notify();
+  },
+  createNewDailyReportTemplateInstanceFromCurrent(draft) {
+    if (draft) {
+      state.ui.directorReportTemplateDraft = {
+        ...(state.ui.directorReportTemplateDraft || createBlankDailyReportTemplateDraft()),
+        ...draft,
+        sections: Array.isArray(draft.sections) ? draft.sections : [],
+      };
+    }
+    state.ui.directorReportTemplateEditingId = "";
+    return actions.openDailyReportTemplateImport(state.ui.directorReportTemplateDraft);
   },
   closeDailyReportTemplateEditor() {
     state.ui.directorReportTemplateDraft = null;
@@ -3539,7 +5331,7 @@ export const actions = {
     }
     state.ui.directorReportTemplateImportOpen = true;
     state.ui.directorReportTemplateImportInstitutionId =
-      state.ui.directorReportTemplateImportInstitutionId || state.institution.id || "demo-qinghe-care";
+      state.ui.directorReportTemplateImportInstitutionId || state.institution.id || "";
     state.ui.directorReportTemplateImportError = "";
     notify();
 
@@ -3562,12 +5354,18 @@ export const actions = {
     notify();
 
     try {
-      const response = await fetchDailyReportTemplates({ limit: 100 });
+      const response = await fetchDailyReportTemplates({ templateType: "base", limit: 100 });
       const items = Array.isArray(response?.items) ? response.items : [];
       const institutions = Array.isArray(response?.institutions) ? response.institutions : [];
       state.ui.directorReportTemplateImportCatalog = { items, institutions };
 
-      const selectedInstitutionId = state.ui.directorReportTemplateImportInstitutionId || state.institution.id;
+      const idsWithTemplates = new Set(items.map((item) => item.institutionId).filter(Boolean));
+      const selectedInstitutionId = idsWithTemplates.has(state.ui.directorReportTemplateImportInstitutionId)
+        ? state.ui.directorReportTemplateImportInstitutionId
+        : idsWithTemplates.has(state.institution.id)
+          ? state.institution.id
+          : items[0]?.institutionId || state.institution.id || "";
+      state.ui.directorReportTemplateImportInstitutionId = selectedInstitutionId;
       const matchedTemplates = items.filter((item) => item.institutionId === selectedInstitutionId);
       if (!matchedTemplates.some((item) => item.id === state.ui.directorReportTemplateImportTemplateId)) {
         state.ui.directorReportTemplateImportTemplateId = matchedTemplates[0]?.id || "";
@@ -3625,7 +5423,9 @@ export const actions = {
 
     state.ui.directorReportTemplateDraft = {
       ...imported,
-      id: imported.id || `daily-report-import-${Date.now()}`,
+      id: `daily-report-${state.institution.id || "institution"}-${Date.now()}`,
+      templateType: "instance",
+      baseTemplateId: imported.id || "",
       version: 1,
       updatedAt: "",
     };
@@ -3668,12 +5468,7 @@ export const actions = {
     const targetDate = date || state.ui.directorInboxExportDate || state.ui.directorInboxSelectedDate;
     if (!targetDate) return;
 
-    const cachedReports = getCachedCareReportsByDate(targetDate);
-    if (!cachedReports.length) {
-      touchToast("这一天缓存里没有日报，请先手动刷新云端");
-      notify();
-      return;
-    }
+    await actions.refreshDirectorCloudReports({ recordDate: targetDate, silent: true });
 
     state.ui.directorCareRecordBatchDate = targetDate;
     state.ui.directorCareRecordPreviewOpen = true;
@@ -3694,9 +5489,18 @@ export const actions = {
       return;
     }
 
+    const titleSlug = String(templateName).replace(/[^a-zA-Z0-9一-鿿]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "custom";
+    const draftId = String(draft?.id || "").trim();
+    const isDraftInstanceId =
+      draftId &&
+      draftId !== "daily-report-basic" &&
+      !draftId.startsWith("base-") &&
+      !(state.dailyReportTemplates || {})[draftId];
     const newId = isEditing
       ? editingId
-      : `daily-report-${String(templateName).replace(/[^a-zA-Z0-9一-鿿]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "custom"}`;
+      : isDraftInstanceId
+        ? draftId
+        : `daily-report-${state.institution.id || "institution"}-${titleSlug}-${Date.now()}`;
     const existingTemplate = isEditing ? (state.dailyReportTemplates || {})[editingId] : null;
 
     const nextTemplate = normalizeDailyReportTemplate({
@@ -3712,8 +5516,8 @@ export const actions = {
     }
 
     applyDailyReportTemplate(nextTemplate);
-    state.ui.directorReportTemplateDraft = null;
-    state.ui.directorReportTemplateEditingId = "";
+    state.ui.directorReportTemplateDraft = nextTemplate;
+    state.ui.directorReportTemplateEditingId = nextTemplate.id;
     state.ui.directorReportTemplateTransient = { newSectionTitle: "", newItems: {} };
     state.ui.directorReportTemplateScheduleSectionId = "";
     state.ui.directorReportTemplatePreviewOpen = false;
@@ -3727,16 +5531,18 @@ export const actions = {
           institutionName: state.institution.name,
           updatedBy: state.director.reviewerName || "director",
           source: "director-app",
+          templateType: "instance",
+          baseTemplateId: nextTemplate.baseTemplateId || "",
         });
         if (response?.item) {
-          applyDailyReportTemplate(response.item);
+          const cloudTemplate = normalizeDailyReportTemplate(response.item);
+          applyDailyReportTemplate(cloudTemplate);
+          state.ui.directorReportTemplateDraft = cloudTemplate;
+          state.ui.directorReportTemplateEditingId = cloudTemplate.id;
+          notify();
         }
 
-        if (taskSync.failed) {
-          touchToast(`日报模板已同步，${taskSync.failed} 个任务云端同步失败`);
-        } else {
-          touchToast(`日报模板和 ${taskSync.ok} 个任务已同步云端`);
-        }
+        touchToast("日报模板已同步云端");
         actions.persistInstitutionSharedState({ silent: true });
         return;
       } catch (error) {
@@ -3751,7 +5557,8 @@ export const actions = {
     if (!isCloudSyncConfigured()) return;
     try {
       const response = await fetchDailyReportTemplates({
-        institutionId: state.institution.id,
+        institutionId: getCurrentSessionInstitutionId(),
+        templateType: "instance",
       });
       if (Array.isArray(response?.items)) {
         const map = {};
@@ -4041,6 +5848,14 @@ export const actions = {
     state.ui.directorAuditDate = value || state.director.date || formatNowDate();
     notify();
   },
+  async setDirectorAnomalyDate(value) {
+    const nextDate = value || state.director.date || formatNowDate();
+    state.ui.directorAuditDate = nextDate;
+    notify();
+    if (isCloudSyncConfigured()) {
+      await actions.refreshDirectorCloudTasks({ silent: true, force: true, recordDate: nextDate, limit: 500 });
+    }
+  },
   setDirectorResidentSearch(value) {
     state.ui.directorResidentSearch = value || "";
     notify();
@@ -4140,25 +5955,21 @@ export const actions = {
     notify();
 
     try {
-      const response = await uploadCareRecord({
-        ...savedReport,
-        institutionId: state.institution.id,
-        caregiverId: savedReport.caregiverId || state.caregiver.id,
-        caregiverName: savedReport.caregiverName || state.caregiver.name,
-        workflowStatus: "submitted",
-        source: "caregiver-app",
-      });
-      const syncedReport = mergeCloudCareRecord({
-        ...response?.item,
-        syncStatus: "synced",
-      });
+      const reportTasks = state.tasks.filter(
+        (task) =>
+          task.caregiverId === (savedReport.caregiverId || state.caregiver.id) &&
+          task.elderId === savedReport.elderId &&
+          (!task.recordDate || task.recordDate === savedReport.recordDate),
+      );
+      await Promise.all(reportTasks.map((task) => syncCaregiverTaskToCloud(task, "任务记录云端同步失败")));
+      const syncedReport = mergeCloudCareRecord({ ...savedReport, syncStatus: "synced", workflowStatus: "submitted" });
       state.ui.selectedCaregiverReportElderId = syncedReport.elderId;
       state.ui.caregiverDailyReportDraft = syncedReport;
       upsertFamilyCareReportNotice(syncedReport, "synced");
       setCloudCareReportsError("");
-      setCloudCareReportsFetchedAt(response?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`);
+      setCloudCareReportsFetchedAt(`${formatNowDate()} ${formatNowTime()}`);
       await actions.persistInstitutionSharedState({ silent: true });
-      touchToast("交班日报已上传到云端");
+      touchToast("护工任务记录已同步到云端");
     } catch (error) {
       const failedReport = upsertDailyReport(savedReport, "sync-failed");
       state.ui.selectedCaregiverReportElderId = failedReport.elderId;
@@ -4166,6 +5977,55 @@ export const actions = {
       upsertFamilyCareReportNotice(failedReport, "sync-failed");
       setCloudCareReportsError(error?.message || "云端同步失败");
       touchToast(error?.message || "云端同步失败");
+    }
+  },
+  async syncCaregiverAutoCareRecord(elderId = "", options = {}) {
+    const elder = getElderById(elderId);
+    if (!elder) return;
+
+    const recordDate = getHistoryFilterRecordDate();
+    const timelineTasks = sortTasksBySchedule(
+      state.tasks.filter(
+        (task) =>
+          task.caregiverId === state.caregiver.id &&
+          task.elderId === elder.id &&
+          (!task.recordDate || task.recordDate === recordDate) &&
+          hasCaregiverTaskOperation(task),
+      ),
+    );
+    const existingReport = findDailyReport(elder.id, recordDate);
+    const autoRecord = createAutoCareRecordFromTimeline(elder, timelineTasks, recordDate, existingReport);
+    const pendingRecord = upsertDailyReport(autoRecord, "pending-sync");
+    state.ui.selectedCaregiverReportElderId = elder.id;
+    state.ui.caregiverDailyReportDraft = pendingRecord;
+    upsertFamilyCareReportNotice(pendingRecord, "pending-sync");
+    if (!options.deferNotify) notify();
+
+    if (!isCloudSyncConfigured()) {
+      const failedReport = upsertDailyReport(pendingRecord, "sync-failed");
+      state.ui.caregiverDailyReportDraft = failedReport;
+      touchToast("云端接口未配置，护理记录已保存为待归档");
+      notify();
+      return;
+    }
+
+    try {
+      await Promise.all(timelineTasks.map((task) => syncCaregiverTaskToCloud(task, "护理记录云端同步失败")));
+      const syncedReport = mergeCloudCareRecord({ ...pendingRecord, syncStatus: "synced", workflowStatus: "submitted" });
+      state.ui.caregiverDailyReportDraft = syncedReport;
+      upsertFamilyCareReportNotice(syncedReport, "synced");
+      setCloudCareReportsError("");
+      setCloudCareReportsFetchedAt(`${formatNowDate()} ${formatNowTime()}`);
+      await actions.persistInstitutionSharedState({ silent: true });
+      touchToast("护理记录已刷新");
+      notify();
+    } catch (error) {
+      const failedReport = upsertDailyReport(pendingRecord, "sync-failed");
+      state.ui.caregiverDailyReportDraft = failedReport;
+      upsertFamilyCareReportNotice(failedReport, "sync-failed");
+      setCloudCareReportsError(error?.message || "护理记录云端同步失败");
+      touchToast(error?.message || "护理记录云端同步失败");
+      notify();
     }
   },
   async refreshDirectorCloudReports(options = {}) {
@@ -4189,33 +6049,299 @@ export const actions = {
     const prevSnapshot = JSON.stringify(state.cloud.careReports);
     directorCareReportsRequestInFlight = true;
     try {
+      const baseDate = options.recordDate || state.ui.directorAuditDate || state.director.date || formatNowDate();
+      const match = /^(\d{4})-(\d{2})/.exec(String(baseDate || ""));
+      const year = match ? Number(match[1]) : Number(formatNowDate().slice(0, 4));
+      const month = match ? Number(match[2]) : Number(formatNowDate().slice(5, 7));
+      const daysInMonth = new Date(year, month, 0).getDate();
+      const today = state.director.date || formatNowDate();
+      const dates = Array.from({ length: daysInMonth }, (_, index) => `${year}-${String(month).padStart(2, "0")}-${String(index + 1).padStart(2, "0")}`)
+        .filter((date) => !today || date <= today);
+
+      for (const recordDate of dates) {
+        await actions.refreshDirectorCloudTasks({
+          silent: true,
+          force: true,
+          recordDate,
+          limit: options.limit || 500,
+        });
+      }
+      setCloudCareReportsFetchedAt(`${formatNowDate()} ${formatNowTime()}`);
+      setCloudCareReportsError("");
+    } catch (error) {
+      setCloudCareReportsError(error?.message || "收集云端日报任务失败");
+    } finally {
+      directorCareReportsRequestInFlight = false;
+      setCloudCareReportsLoading(false);
+      if (JSON.stringify(state.cloud.careReports) !== prevSnapshot || !options.silent) notify();
+    }
+  },
+  async refreshCaregiverTaskRecords(options = {}) {
+    if (state.session.identity !== "caregiver" || !state.caregiver?.id) return;
+    if (caregiverCareReportsRequestInFlight) return;
+
+    if (!isCloudSyncConfigured()) {
+      setCloudCareReportsError("云端接口未配置");
+      if (!options.silent) notify();
+      return;
+    }
+
+    caregiverCareReportsRequestInFlight = true;
+    setCloudCareReportsLoading(true);
+    if (!options.preserveError) setCloudCareReportsError("");
+    if (!options.silent) notify();
+
+    const recordDate = options.recordDate || getHistoryFilterRecordDate();
+    try {
       await downloadDirectorCareReports(
         {
-          limit: options.limit || 120,
-          elderId: options.elderId || "",
-          recordDate: options.recordDate || "",
-          caregiverId: options.caregiverId || "",
+          institutionId: getCurrentSessionInstitutionId(),
+          caregiverId: state.caregiver.id,
+          recordDate,
+          limit: options.limit || 100,
         },
         { clear: false },
       );
     } catch (error) {
-      setCloudCareReportsError(error?.message || "拉取云端交班日报失败");
+      setCloudCareReportsError(error?.message || "拉取云端护理记录失败");
+      state.cloud.lastCaregiverRecordSync = {
+        ...(state.cloud.lastCaregiverRecordSync || {}),
+        institutionId: getCurrentSessionInstitutionId(),
+        caregiverId: state.caregiver.id,
+        recordDate,
+        error: error?.message || "拉取云端护理记录失败",
+      };
     } finally {
-      directorCareReportsRequestInFlight = false;
+      caregiverCareReportsRequestInFlight = false;
       setCloudCareReportsLoading(false);
-      if (JSON.stringify(state.cloud.careReports) !== prevSnapshot) notify();
+      notify();
+    }
+  },
+  async refreshCloudInventory(options = {}) {
+    if (!isCloudSyncConfigured()) {
+      if (!options.silent) touchToast("云端接口未配置");
+      return;
+    }
+    const hasInventoryInputFocus = () =>
+      Boolean(
+        typeof document !== "undefined" &&
+          document.activeElement?.closest?.("[data-inventory-stock-adjust-form], [data-inventory-item-form]"),
+      );
+    setCloudInventoryLoading(true);
+    if (!options.preserveError) setCloudInventoryError("");
+    if (!options.silent) notify();
+    try {
+      const institutionId = getCurrentSessionInstitutionId();
+      const [itemsResponse, usagesResponse] = await Promise.all([
+        fetchInventoryItems({ institutionId }),
+        fetchInventoryUsages({
+          institutionId,
+          recordDate: options.recordDate || state.ui.inventoryUsageFilters?.recordDate || "",
+          itemName: options.itemName || state.ui.inventoryUsageFilters?.itemName || "",
+          limit: options.limit || 100,
+        }),
+      ]);
+      replaceInventoryItems(Array.isArray(itemsResponse?.items) ? itemsResponse.items : []);
+      mergeInventoryUsages(Array.isArray(usagesResponse?.items) ? usagesResponse.items : []);
+      setCloudInventoryFetchedAt(itemsResponse?.fetchedAt || usagesResponse?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`);
+      setCloudInventoryError("");
+      if (!options.silent) touchToast("库存已刷新");
+      if (!hasInventoryInputFocus()) {
+        notify();
+      } else {
+        setCloudInventoryLoading(false);
+      }
+    } catch (error) {
+      setCloudInventoryError(error?.message || "库存云端同步失败");
+      if (!options.silent) touchToast(state.cloud.inventoryError);
+    } finally {
+      setCloudInventoryLoading(false);
+    }
+  },
+  openInventoryItemDraft(itemId = "") {
+    const item = getInventoryItemById(itemId);
+    state.ui.inventoryItemActionsId = "";
+    state.ui.inventoryItemDraft = item
+      ? { ...item }
+      : {
+          id: "",
+          name: "",
+          category: "护理用品",
+          unit: "件",
+          quantity: 0,
+          warningQuantity: 0,
+          location: "",
+        };
+    notify();
+  },
+  closeInventoryItemDraft() {
+    state.ui.inventoryItemDraft = null;
+    notify();
+  },
+  openInventoryItemActions(itemId = "") {
+    state.ui.inventoryItemActionsId = itemId;
+    const item = getInventoryItemById(itemId);
+    if (item?.name) {
+      actions.refreshCloudInventory({ silent: true, itemName: item.name, limit: 500 });
+    }
+    notify();
+  },
+  closeInventoryItemActions() {
+    state.ui.inventoryItemActionsId = "";
+    notify();
+  },
+  openInventoryStockAdjust(itemId = "") {
+    const item = getInventoryItemById(itemId);
+    if (!item) return;
+    state.ui.inventoryItemActionsId = "";
+    state.ui.inventoryStockAdjustDraft = {
+      id: item.id,
+      name: item.name,
+      category: item.category,
+      unit: item.unit,
+      currentQuantity: item.quantity,
+      warningQuantity: item.warningQuantity,
+      location: item.location,
+      mode: "increase",
+    };
+    notify();
+  },
+  closeInventoryStockAdjust() {
+    state.ui.inventoryStockAdjustDraft = null;
+    notify();
+  },
+  setInventoryStockAdjustMode(mode = "increase") {
+    if (!state.ui.inventoryStockAdjustDraft) return;
+    state.ui.inventoryStockAdjustDraft = {
+      ...state.ui.inventoryStockAdjustDraft,
+      mode: mode === "decrease" ? "decrease" : "increase",
+    };
+    notify();
+  },
+  setInventoryUsageFilter(patch = {}) {
+    state.ui.inventoryUsageFilters = {
+      ...(state.ui.inventoryUsageFilters || {}),
+      ...patch,
+    };
+    notify();
+  },
+  async deleteInventoryItem(itemId = "") {
+    const item = getInventoryItemById(itemId);
+    if (!item) return;
+    if (!isCloudSyncConfigured()) {
+      touchToast("云端接口未配置，无法删除库存");
+      return;
+    }
+    try {
+      const response = await upsertInventoryItem({
+        id: item.id,
+        institutionId: getCurrentSessionInstitutionId(),
+        name: item.name,
+        category: item.category,
+        unit: item.unit,
+        quantity: item.quantity,
+        warningQuantity: item.warningQuantity,
+        location: item.location,
+        status: "deleted",
+      });
+      mergeInventoryItems(response?.item ? [response.item] : []);
+      state.ui.inventoryItemActionsId = "";
+      setCloudInventoryFetchedAt(response?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`);
+      touchToast("物资已删除");
+      notify();
+    } catch (error) {
+      setCloudInventoryError(error?.message || "库存删除失败");
+      touchToast(error?.message || "库存删除失败");
+    }
+  },
+  async saveInventoryStockAdjust(input = {}) {
+    const draft = {
+      ...(state.ui.inventoryStockAdjustDraft || {}),
+      ...input,
+    };
+    if (!draft.id) return;
+    const amount = Math.max(0, Number(draft.amount || 0));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      touchToast("请输入调整数量");
+      return;
+    }
+    const delta = draft.mode === "decrease" ? -amount : amount;
+    const nextQuantity = Math.max(0, Number(draft.currentQuantity || 0) + delta);
+    if (!isCloudSyncConfigured()) {
+      touchToast("云端接口未配置，无法调整库存");
+      return;
+    }
+    try {
+      const response = await upsertInventoryItem({
+        id: draft.id,
+        institutionId: getCurrentSessionInstitutionId(),
+        name: draft.name,
+        category: draft.category || "护理用品",
+        unit: draft.unit || "件",
+        quantity: nextQuantity,
+        warningQuantity: Math.max(0, Number(draft.warningQuantity || 0)),
+        location: draft.location || "",
+        status: "active",
+      });
+      mergeInventoryItems(response?.item ? [response.item] : []);
+      setCloudInventoryFetchedAt(response?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`);
+      setCloudInventoryError("");
+      state.ui.inventoryStockAdjustDraft = null;
+      touchToast("库存已调整");
+      notify();
+    } catch (error) {
+      setCloudInventoryError(error?.message || "库存调整失败");
+      touchToast(error?.message || "库存调整失败");
+    }
+  },
+  async saveInventoryItem(input = {}) {
+    const draft = {
+      ...(state.ui.inventoryItemDraft || {}),
+      ...input,
+    };
+    const name = String(draft.name || "").trim();
+    if (!name) {
+      touchToast("请输入库存名称");
+      return;
+    }
+    if (!isCloudSyncConfigured()) {
+      touchToast("云端接口未配置，无法保存库存");
+      return;
+    }
+    try {
+      const response = await upsertInventoryItem({
+        id: draft.id || "",
+        institutionId: getCurrentSessionInstitutionId(),
+        name,
+        category: draft.category || "护理用品",
+        unit: draft.unit || "件",
+        quantity: Math.max(0, Number(draft.quantity || 0)),
+        warningQuantity: Math.max(0, Number(draft.warningQuantity || 0)),
+        location: draft.location || "",
+        status: draft.status || "active",
+      });
+      mergeInventoryItems(response?.item ? [response.item] : []);
+      setCloudInventoryFetchedAt(response?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`);
+      setCloudInventoryError("");
+      state.ui.inventoryItemDraft = null;
+      touchToast("库存已保存到云端");
+      notify();
+    } catch (error) {
+      setCloudInventoryError(error?.message || "库存保存失败");
+      touchToast(error?.message || "库存保存失败");
     }
   },
   async loadLatestDirectorCareRecord(elderId, recordDate = "", options = {}) {
     if (!elderId || !isCloudSyncConfigured()) return;
 
     try {
-      const response = await fetchCareRecords({
+      const response = await fetchCaregiverTaskRecords({
+        institutionId: state.institution.id,
         elderId,
         recordDate,
         limit: 1,
       });
-      const latestRecord = Array.isArray(response?.items) ? response.items[0] : null;
+      const latestRecord = groupTaskRecordsAsCareReports(Array.isArray(response?.items) ? response.items : [])[0] || null;
       if (!latestRecord) {
         if (!options.silent) {
           notify();
@@ -4257,6 +6383,8 @@ export const actions = {
   },
   async loadTaskEvidence(taskId) {
     if (!taskId || !isCloudSyncConfigured()) return;
+    if (taskEvidenceRequestsInFlight.has(taskId)) return;
+    taskEvidenceRequestsInFlight.add(taskId);
     try {
       var detail = await requestJson("/api/tasks/" + encodeURIComponent(taskId));
       var item = detail && detail.item;
@@ -4271,17 +6399,37 @@ export const actions = {
             existing[_ek2] = _cloudEv;
           }
         }
-        state.tasks.splice(taskIndex, 1, { ...existing });
+        state.tasks.splice(taskIndex, 1, {
+          ...existing,
+          recordNote: item.recordNote || existing.recordNote || "",
+          recordEvidenceCount: Number(item.recordEvidenceCount || existing.recordEvidenceCount || 0),
+          recordedAt: item.recordedAt || existing.recordedAt || "",
+          exceptionNote: item.exceptionNote || existing.exceptionNote || "",
+          exceptionType: item.exceptionType || existing.exceptionType || "",
+          exceptionEvidenceCount: Number(item.exceptionEvidenceCount || existing.exceptionEvidenceCount || 0),
+          exceptionReportedAt: item.exceptionReportedAt || existing.exceptionReportedAt || "",
+          completedAt: item.completedAt || existing.completedAt || "",
+        });
       }
       notify();
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      taskEvidenceRequestsInFlight.delete(taskId);
+    }
   },
   async refreshCaregiverCloudTasks(options = {}) {
     if (state.session.identity !== "caregiver" || !state.caregiver?.id) return;
+    const syncCaregiverId = state.caregiver.id;
+    const syncInstitutionId = getCurrentSessionInstitutionId();
+    if (syncInstitutionId && state.institution.id !== syncInstitutionId) {
+      state.institution.id = syncInstitutionId;
+    }
+    const syncDate = getCaregiverRecordDate(options);
+    state.ui.caregiverTaskRecordDate = syncDate;
     const buildTaskSignature = () =>
       JSON.stringify(
         state.tasks
-          .filter((task) => task.caregiverId === state.caregiver.id)
+          .filter((task) => task.caregiverId === syncCaregiverId)
           .map((task) => [task.id, task.elderId, task.caregiverId, task.status, task.publishedAt]),
       );
     let shouldNotify = !options.silent || options.force;
@@ -4289,10 +6437,38 @@ export const actions = {
 
     if (!isCloudSyncConfigured()) {
       if (!options.silent) {
-        setCloudTasksError("云端任务接口未配置");
+      setCloudTasksError("云端任务接口未配置");
         notify();
       }
       return;
+    }
+
+    if (!syncInstitutionId) {
+      setCloudTasksError("当前登录会话缺少养老院ID，无法拉取任务");
+      if (!options.silent) notify();
+      return;
+    }
+
+    if (options.ensureInstitutionState || !state.cloud.institutionStateFetchedAt) {
+      await actions.refreshInstitutionSharedState({ silent: true });
+    }
+
+    let pendingSyncStatus = null;
+    if (!options.force && options.checkStatus !== false) {
+      try {
+        const syncStatus = await checkCloudSyncDomains(["tasks"], {
+          institutionId: syncInstitutionId,
+          recordDate: syncDate,
+          commit: false,
+        });
+        if (syncStatus && !syncDomainChanged(syncStatus, "tasks")) {
+          commitCloudSyncDomains(syncStatus, { institutionId: syncInstitutionId, recordDate: syncDate });
+          setCloudTasksFetchedAt(`${formatNowDate()} ${formatNowTime()}`);
+          setCloudTasksError("");
+          return;
+        }
+        pendingSyncStatus = syncStatus;
+      } catch (_) {}
     }
 
     setCloudTasksLoading(true);
@@ -4303,9 +6479,9 @@ export const actions = {
 
     try {
       const response = await fetchPublishedTasks({
-        institutionId: state.institution.id,
-        caregiverId: state.caregiver.id,
-        recordDate: options.recordDate || state.director.date,
+        institutionId: syncInstitutionId,
+        caregiverId: syncCaregiverId,
+        recordDate: syncDate,
         limit: options.limit || 100,
         light: true,
       });
@@ -4317,30 +6493,48 @@ export const actions = {
             ? response
             : [];
 
-      const cloudIds = new Set(nextItems.map((t) => t.id || t.taskId).filter(Boolean));
-      const cloudPlanItemIds = new Set(nextItems.map((t) => t.planItemId).filter(Boolean));
+      const normalizedItems = nextItems.map((item) => normalizeCloudTask(item)).filter(Boolean);
+      const mergedItems = normalizedItems.filter((item) => item.caregiverId === syncCaregiverId);
+      state.cloud.lastCaregiverTaskSync = {
+        institutionId: syncInstitutionId,
+        caregiverId: syncCaregiverId,
+        recordDate: syncDate,
+        returnedCount: nextItems.length,
+        normalizedCount: normalizedItems.length,
+        mergedCount: mergedItems.length,
+        skippedCount: normalizedItems.length - mergedItems.length,
+        fetchedAt: response?.fetchedAt || "",
+      };
+
+      const cloudIds = new Set(normalizedItems.map((t) => t.id || t.taskId).filter(Boolean));
       state.tasks = state.tasks.filter((task) => {
         if (isTemporaryTask(task)) return true;
-        if (task.caregiverId !== state.caregiver.id) return true;
+        if (task.caregiverId !== syncCaregiverId) return true;
+        if (task.recordDate && task.recordDate !== syncDate) return true;
         if (cloudIds.has(task.id)) return true;
-        if (task.planItemId && cloudPlanItemIds.has(task.planItemId)) return true;
         return false;
       });
 
-      nextItems.forEach((item) => {
-        if (item.caregiverId === state.caregiver.id) {
-          mergeCloudTask(item, { skipSort: true });
-        }
-      });
+      mergedItems.forEach((item) => mergeCloudTask(item, { skipSort: true }));
       state.tasks = sortTasksBySchedule(state.tasks);
 
       refreshDirectorOverview();
       ensureCurrentSelections();
       setCloudTasksFetchedAt(response?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`);
       setCloudTasksError("");
+      if (pendingSyncStatus) {
+        commitCloudSyncDomains(pendingSyncStatus, { institutionId: syncInstitutionId, recordDate: syncDate });
+      }
       shouldNotify = shouldNotify || beforeSignature !== buildTaskSignature();
     } catch (error) {
       setCloudTasksError(error?.message || "拉取云端任务失败");
+      state.cloud.lastCaregiverTaskSync = {
+        ...(state.cloud.lastCaregiverTaskSync || {}),
+        institutionId: syncInstitutionId,
+        caregiverId: syncCaregiverId,
+        recordDate: syncDate,
+        error: error?.message || "拉取云端任务失败",
+      };
     } finally {
       setCloudTasksLoading(false);
       if (shouldNotify) {
@@ -4353,8 +6547,6 @@ export const actions = {
 
     if (!isCloudSyncConfigured()) return;
 
-    if (!state.cloud.institutionStateFetchedAt) return;
-
     // updatedAt excluded — changes on every fetch, would break signature no-op
     const buildTaskSignature = () =>
       state.tasks.map((task) => [task.id, task.status, task.recordNote || "", (task.recordEvidence || []).length]);
@@ -4363,11 +6555,27 @@ export const actions = {
 
     let shouldNotify = !options.silent;
     const beforeSignature = buildTaskSignature();
+    const syncDate = options.recordDate || state.director.date || formatNowDate();
 
     try {
+      let pendingSyncStatus = null;
+      if (!options.force && options.checkStatus !== false) {
+        const syncStatus = await checkCloudSyncDomains(["tasks"], {
+          institutionId: state.institution.id,
+          recordDate: syncDate,
+          commit: false,
+        });
+        if (syncStatus && !syncDomainChanged(syncStatus, "tasks")) {
+          commitCloudSyncDomains(syncStatus, { institutionId: state.institution.id, recordDate: syncDate });
+          setCloudTasksFetchedAt(`${formatNowDate()} ${formatNowTime()}`);
+          setCloudTasksError("");
+          return;
+        }
+        pendingSyncStatus = syncStatus;
+      }
       const response = await fetchPublishedTasks({
         institutionId: state.institution.id,
-        recordDate: options.recordDate || state.director.date || formatNowDate(),
+        recordDate: syncDate,
         limit: options.limit || 200,
         light: true,
       });
@@ -4379,14 +6587,25 @@ export const actions = {
             ? response
             : [];
 
-      nextItems.forEach((item) => {
+      const cloudKeys = new Set();
+      nextItems.forEach((item) => getTaskSyncKeys(normalizeCloudTask(item) || item).forEach((key) => cloudKeys.add(key)));
+      state.tasks = state.tasks.filter((task) => {
+        if (isTemporaryTask(task)) return true;
+        if (task.recordDate && task.recordDate !== syncDate) return true;
+        return taskMatchesSyncKeys(task, cloudKeys);
+      });
 
+      nextItems.forEach((item) => {
         mergeCloudTask(item, { skipSort: true });
       });
       state.tasks = sortTasksBySchedule(state.tasks);
+      hydrateMissingDirectorExceptionEvidence(nextItems);
 
       setCloudTasksFetchedAt(response?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`);
       setCloudTasksError("");
+      if (pendingSyncStatus) {
+        commitCloudSyncDomains(pendingSyncStatus, { institutionId: state.institution.id, recordDate: syncDate });
+      }
 
       const afterSignature = buildTaskSignature();
       if (signToString(beforeSignature) !== signToString(afterSignature)) {
@@ -4518,28 +6737,29 @@ export const actions = {
   async reassignElderCaregiver(elderId, floor) {
     const elder = getElderById(elderId);
     if (!elder) return;
-    const floorCaregivers = state.caregivers.filter((c) => c.floor === floor);
-    if (floorCaregivers.length < 2) {
-      touchToast("该楼层只有一名护工，无需调整");
+    const availableCaregivers = [...state.caregivers].sort((left, right) => {
+      const leftRank = Number(left.floor) === Number(floor) ? 0 : 1;
+      const rightRank = Number(right.floor) === Number(floor) ? 0 : 1;
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      return String(left.name || "").localeCompare(String(right.name || ""), "zh-CN");
+    });
+    if (!availableCaregivers.length) {
+      touchToast("当前养老院还没有可分配护工");
       return;
     }
-    const currentIdx = floorCaregivers.findIndex((c) => c.id === elder.assignedCaregiverId);
-    const nextIdx = (currentIdx + 1) % (floorCaregivers.length + 1);
-    if (nextIdx >= floorCaregivers.length) {
-      elder.assignedCaregiverId = "";
-      touchToast("已取消手动指定，恢复自动分配");
-    } else {
-      elder.assignedCaregiverId = floorCaregivers[nextIdx].id;
-      touchToast("已分配给 " + floorCaregivers[nextIdx].name);
-    }
+    const currentIdx = availableCaregivers.findIndex((c) => c.id === elder.assignedCaregiverId);
+    const nextIdx = (currentIdx + 1) % availableCaregivers.length;
+    elder.assignedCaregiverId = availableCaregivers[nextIdx].id;
+    touchToast("已分配给 " + availableCaregivers[nextIdx].name);
 
     const effectiveCaregiver = getCaregiverForFloor(floor, elder.id);
-    const syncedTasks = effectiveCaregiver ? syncPendingElderTasksToCaregiver(elder.id, effectiveCaregiver.id) : [];
+    if (effectiveCaregiver) syncPendingElderTasksToCaregiver(elder.id, effectiveCaregiver.id);
 
     notify();
 
-    await actions.persistInstitutionSharedState({ silent: true });
-    const uploadResult = await uploadSyncedElderTasks(syncedTasks);
+    const uploadResult = effectiveCaregiver
+      ? await syncElderAssignmentToCloud(elder.id, effectiveCaregiver.id)
+      : await actions.persistInstitutionSharedState({ silent: true }).then((ok) => ({ ok, count: 0 }));
     if (!uploadResult.ok) {
       touchToast("老人分配已保存，任务云端同步失败");
       notify();
@@ -4553,23 +6773,25 @@ export const actions = {
     const elder = getElderById(elderId);
     const caregiver = getCaregiverById(caregiverId);
     if (!elder || !caregiver) return;
+    const previousCaregiverId = elder.assignedCaregiverId || "";
     elder.assignedCaregiverId = caregiverId;
     touchToast("已将 " + elder.name + " 分配给 " + caregiver.name);
 
-    const syncedTasks = syncPendingElderTasksToCaregiver(elder.id, caregiver.id);
+    syncPendingElderTasksToCaregiver(elder.id, caregiver.id);
 
     notify();
 
-    await actions.persistInstitutionSharedState({ silent: true });
-    const uploadResult = await uploadSyncedElderTasks(syncedTasks);
+    const uploadResult = await syncElderAssignmentToCloud(elder.id, caregiver.id);
     if (!uploadResult.ok) {
-      touchToast("老人分配已保存，任务云端同步失败");
+      elder.assignedCaregiverId = previousCaregiverId;
+      touchToast("分配失败，云端未保存，请重试");
       notify();
       return;
     }
     if (isCloudSyncConfigured()) {
       await actions.refreshDirectorCloudTasks({ silent: true, force: true, recordDate: state.director.date });
     }
+    touchToast("分配已同步云端");
   },
   openDirectorPlanNoteDraft(elderId = "") {
     const plan = getPlanByElderId(elderId || state.ui.selectedDirectorPlanRoom);
@@ -4935,7 +7157,7 @@ actions.enterCaregiver = function enterCaregiver() {
   notify();
 };
 
-actions.devEnterCaregiver = function devEnterCaregiver() {
+actions.devEnterCaregiver = async function devEnterCaregiver() {
   state.session.identity = "caregiver";
   state.session.loggedIn = true;
   state.session.clockInAt = formatNowTime();
@@ -4952,17 +7174,25 @@ actions.devEnterCaregiver = function devEnterCaregiver() {
   state.ui.activeTab = "home";
   syncCurrentCaregiverStatus("on-duty");
   actions.refreshDailyReportTemplate({ silent: true });
+  await actions.refreshInstitutionSharedState({ silent: true });
+  const attendanceRecord = recordCurrentCaregiverClockIn();
+  await actions.syncAttendanceRecord(attendanceRecord, { silent: true });
+  await actions.refreshCaregiverCloudTasks({ silent: true, force: true });
   touchToast("已通过开发者入口进入护工端");
 };
 
-actions.clockIn = function clockIn() {
+actions.clockIn = async function clockIn() {
   if (state.session.loggedIn && state.session.clockInAt) return;
+  if (state.session.identity === "caregiver") {
+    bindCurrentCaregiverFromSession();
+  }
 
   state.session.loggedIn = true;
   state.session.clockInAt = formatNowTime();
   state.session.clockOutAt = "";
   state.session.clockInLocation = "院内打卡";
   state.session.clockInLocationRaw = null;
+  const attendanceRecord = recordCurrentCaregiverClockIn();
   state.ui.attendanceVerification = createAttendanceVerificationState({
     status: "success",
     fingerprintStatus: "success",
@@ -4973,10 +7203,15 @@ actions.clockIn = function clockIn() {
   state.ui.route = "home";
   state.ui.activeTab = "home";
   touchToast("上班打卡成功 " + state.session.clockInAt);
-  actions.refreshInstitutionSharedState({ silent: true });
+  await actions.syncAttendanceRecord(attendanceRecord, { silent: true });
+  await actions.refreshInstitutionSharedState({ silent: true });
+  await actions.refreshCaregiverCloudTasks({ silent: true, force: true });
 };
 
 actions.enterWorkbench = function enterWorkbench() {
+  if (state.session.identity === "caregiver") {
+    bindCurrentCaregiverFromSession();
+  }
   state.ui.route = "home";
   state.ui.activeTab = "home";
   notify();
@@ -5119,9 +7354,15 @@ actions.savePlanDraft = function savePlanDraft() {
 };
 
 export function selectors() {
-  const selectedElder = getElderById(state.ui.selectedElderId);
+  const activeRecordDate = state.session.identity === "caregiver" ? getCaregiverRecordDate() : state.director.date || formatNowDate();
+  const directorTaskDate = state.director.date || formatNowDate();
+  const directorDateTasks = state.tasks.filter((task) => task.recordDate === directorTaskDate);
+  const directorAnomalyDate = state.ui.directorAuditDate || state.director.date || formatNowDate();
+  const directorAnomalyTasks = state.tasks.filter((task) => task.recordDate === directorAnomalyDate);
   const rawSelectedTask = getTaskById(state.ui.selectedTaskId);
+  const selectedElder = getElderById(state.ui.selectedElderId) || createTaskElderFallback(rawSelectedTask);
   const selectedTask = rawSelectedTask?.caregiverId === state.caregiver.id ? rawSelectedTask : null;
+  ensureAttendanceState();
   const selectedHistory = getHistoryById(state.ui.selectedHistoryId);
   const taskRecordEvidence = state.ui.taskRecordEvidence || state.ui.taskEvidence || {};
   const taskExceptionEvidence = state.ui.taskExceptionEvidence || {};
@@ -5131,26 +7372,40 @@ export function selectors() {
   const quickExceptionNotes = state.ui.quickExceptionNotes || {};
   const selectedTaskEvidence = selectedTask ? taskRecordEvidence[selectedTask.id] || "" : "";
 
-  const caregiverTasks = sortTasksBySchedule(state.tasks.filter((task) => task.caregiverId === state.caregiver.id)).map(enrichTask);
+  const caregiverTasks = sortTasksBySchedule(
+    state.tasks.filter((task) => task.caregiverId === state.caregiver.id && (!task.recordDate || task.recordDate === activeRecordDate)),
+  ).map(enrichTask);
 
   const elderTasks = selectedElder ? caregiverTasks.filter((task) => task.elderId === selectedElder.id) : [];
   const pendingTasks = caregiverTasks.filter((task) => task.status === "pending");
   const riskTasks = caregiverTasks.filter((task) => task.status === "risk" || task.status === "refused");
   const completedTasks = caregiverTasks.filter((task) => task.status === "completed");
 
-  const floorRooms = state.elders
-    .filter((elder) => elder.floor === state.ui.selectedFloor)
-    .sort((left, right) => left.room.localeCompare(right.room))
-    .filter((elder) => caregiverTasks.some((task) => task.elderId === elder.id))
-    .map((elder) => {
-      const taskList = caregiverTasks.filter((task) => task.elderId === elder.id);
-      const hasRisk = taskList.some((task) => task.status === "risk" || task.status === "refused");
-      const allDone = taskList.length > 0 && taskList.every((task) => task.status === "completed");
-      const nextPending = taskList.find((task) => task.status === "pending");
+  const selectedFloorNumber = normalizeFloorNumber(state.ui.selectedFloor, 0);
+  const floorRoomMap = new Map();
+  caregiverTasks.forEach((task) => {
+    const elder = task.elder || createTaskElderFallback(task);
+    const taskFloor = normalizeFloorNumber(elder?.floor || task.elderFloor, 0);
+    if (!elder || taskFloor !== selectedFloorNumber) return;
+    const key = elder.id || task.elderId || `${taskFloor}-${elder.room || task.elderRoom || task.id}`;
+    if (!floorRoomMap.has(key)) {
+      floorRoomMap.set(key, {
+        elder,
+        tasks: [],
+      });
+    }
+    floorRoomMap.get(key).tasks.push(task);
+  });
+  const floorRooms = Array.from(floorRoomMap.values())
+    .sort((left, right) => String(left.elder.room || "").localeCompare(String(right.elder.room || ""), "zh-CN", { numeric: true }))
+    .map(({ elder, tasks }) => {
+      const hasRisk = tasks.some((task) => task.status === "risk" || task.status === "refused");
+      const allDone = tasks.length > 0 && tasks.every((task) => task.status === "completed");
+      const nextPending = tasks.find((task) => task.status === "pending");
 
       return {
         room: elder.room,
-        floor: elder.floor,
+        floor: normalizeFloorNumber(elder.floor, 1),
         elderId: elder.id,
         elderName: elder.name,
         type: hasRisk ? "error" : allDone ? "completed" : "pending",
@@ -5165,12 +7420,14 @@ export function selectors() {
 
     return matchesSearch && matchesStatus && matchHistoryTimeFilter(item);
   });
+  const caregiverRecordWorkspace = buildCaregiverRecordWorkspace(caregiverTasks);
 
   const floorSummaries = [1, 2, 3, 4, 5].map((floor) => ({
     floor,
     pendingCount: caregiverTasks.filter((task) => {
       const elder = getElderById(task.elderId);
-      return elder && elder.floor === floor && task.status !== "completed";
+      const taskFloor = normalizeFloorNumber(elder?.floor || task.elderFloor, 0);
+      return taskFloor === floor && task.status !== "completed";
     }).length,
   })).filter((item) => item.pendingCount > 0);
 
@@ -5185,7 +7442,7 @@ export function selectors() {
     .filter((elder) => elder.floor === directorSelectedFloorNumber)
     .sort((left, right) => left.room.localeCompare(right.room))
     .map((elder) => {
-      const elderTasks = state.tasks.filter((task) => task.elderId === elder.id);
+      const elderTasks = directorDateTasks.filter((task) => task.elderId === elder.id);
       const riskTask = elderTasks.find((task) => task.status === "risk" || task.status === "refused");
       const pendingTask = elderTasks.find((task) => !task.caregiverId || task.status === "pending");
       const allHandled =
@@ -5204,7 +7461,7 @@ export function selectors() {
         tone: riskTask ? "error" : !elderTasks.length ? "muted" : !pendingTask && allHandled ? "success" : "warning",
       };
     });
-  const directorSelectedFloorCaregivers = buildDirectorFloorCaregiverProgress(state.ui.selectedDirectorFloor, state.tasks);
+  const directorSelectedFloorCaregivers = buildDirectorFloorCaregiverProgress(state.ui.selectedDirectorFloor, directorDateTasks);
   const directorSelectedFloor = {
     ...directorSelectedFloorBase,
     completion: directorSelectedFloorOverview?.rate || directorSelectedFloorBase.completion,
@@ -5250,7 +7507,7 @@ export function selectors() {
   const caregiverLoads = state.caregivers
     .filter((c) => c.cloudUserId)
     .map((caregiver) => {
-      const assigned = state.tasks.filter((task) => task.caregiverId === caregiver.id);
+      const assigned = directorDateTasks.filter((task) => task.caregiverId === caregiver.id);
       return {
         ...caregiver,
         assignedCount: assigned.length,
@@ -5265,7 +7522,12 @@ export function selectors() {
       return left.riskCount - right.riskCount;
     });
 
-  const allDirectorTasks = sortTasksBySchedule(state.tasks).map(enrichTask);
+  const directorAttendance = buildDirectorAttendanceSummary(
+    state.director.date || formatNowDate(),
+    state.ui.selectedAttendanceShift || "all",
+  );
+
+  const allDirectorTasks = sortTasksBySchedule(directorDateTasks).map(enrichTask);
   const directorAuditFilters = {
     floor: state.ui.directorAuditFloor || "all",
     date: state.ui.directorAuditDate || state.director.date || formatNowDate(),
@@ -5312,12 +7574,11 @@ export function selectors() {
   const unassignedTasks = allDirectorTasks.filter((task) => !task.caregiverId);
   const assignedTasks = allDirectorTasks.filter((task) => task.caregiverId);
   const riskDirectorTasks = allDirectorTasks.filter((task) => task.status === "risk" || task.status === "refused");
-  const directorTaskOverview = buildDirectorTaskOverview(state.tasks);
-  const directorCaregiverStatistics = buildDirectorCaregiverStatistics(state.tasks);
+  const directorTaskOverview = buildDirectorTaskOverview(directorDateTasks);
+  const directorCaregiverStatistics = buildDirectorCaregiverStatistics(directorDateTasks);
   const selectedDirectorCaregiverStat =
     directorCaregiverStatistics.find((item) => item.id === state.ui.selectedDirectorStatisticsCaregiverId) || null;
-  const directorExceptionReports = buildDirectorExceptionReports(state.tasks);
-  const directorReadExceptionReports = buildDirectorExceptionReports(state.tasks, { readOnly: true });
+  const directorExceptionReports = buildDirectorExceptionReports(directorAnomalyTasks, { recordDate: directorAnomalyDate });
 
   const dispatchTasks = allDirectorTasks
     .filter((task) => task.assignmentMode === "manual" || task.assignmentMode === "temporary" || task.templateGroup === "special" || task.templateGroup === "temporary")
@@ -5464,7 +7725,8 @@ export function selectors() {
   const directorPlanFloorCards = [1, 2, 3, 4, 5].map((floor) => {
     const floorElders = state.elders.filter((elder) => elder.floor === floor);
     const floorPlans = elderPlanSummaries.filter((plan) => plan.elder && plan.elder.floor === floor);
-    const floorCaregivers = state.caregivers.filter((caregiver) => caregiver.floor === floor);
+    const assignedCaregiverIds = new Set(floorElders.map((elder) => elder.assignedCaregiverId).filter(Boolean));
+    const floorCaregivers = state.caregivers.filter((caregiver) => caregiver.floor === floor || assignedCaregiverIds.has(caregiver.id));
 
     return {
       floor,
@@ -5484,6 +7746,10 @@ export function selectors() {
       bed: elder.bed,
       elderName: elder.name,
       level: plan?.level || elder.level,
+      reportTemplateId: elder.reportTemplateId || "",
+      reportTemplateTitle: elder.reportTemplateTitle || "",
+      assignedCaregiverId: elder.assignedCaregiverId || "",
+      assignedCaregiverName: getCaregiverById(elder.assignedCaregiverId)?.name || "",
       hasPlan: Boolean(plan),
       enabledCount: plan?.enabledCount || 0,
       manualCount:
@@ -5494,24 +7760,32 @@ export function selectors() {
   });
 
   const allDirectorPlanResidents = directorPlanResidents;
-  const selectedPlanFloorCaregivers = state.caregivers.filter((caregiver) => caregiver.floor === state.ui.selectedDirectorPlanFloor);
   const selectedPlanFloorElders = getDirectorPlanEldersByFloor(state.ui.selectedDirectorPlanFloor);
+  const selectedAssignedCaregiverIds = new Set(selectedPlanFloorElders.map((elder) => elder.assignedCaregiverId).filter(Boolean));
+  const selectedPlanFloorCaregivers = state.caregivers
+    .filter((caregiver) => caregiver.floor === state.ui.selectedDirectorPlanFloor || selectedAssignedCaregiverIds.has(caregiver.id))
+    .sort((left, right) => {
+      const leftAssigned = selectedAssignedCaregiverIds.has(left.id) ? 0 : 1;
+      const rightAssigned = selectedAssignedCaregiverIds.has(right.id) ? 0 : 1;
+      if (leftAssigned !== rightAssigned) return leftAssigned - rightAssigned;
+      return String(left.name || "").localeCompare(String(right.name || ""), "zh-CN");
+    });
   const directorPlanFloorStaff = selectedPlanFloorCaregivers.map((caregiver) => ({
     ...caregiver,
+    isCrossFloorForSelectedFloor: caregiver.floor !== state.ui.selectedDirectorPlanFloor,
     rooms: [],
   }));
 
   selectedPlanFloorElders.forEach((elder, elderIndex) => {
-    const elderTasks = state.tasks.filter((task) => task.elderId === elder.id);
-    const matchedCaregiverId =
-      elder.assignedCaregiverId ||
-      elderTasks.find((task) => task.caregiverId && getCaregiverById(task.caregiverId)?.floor === elder.floor)?.caregiverId ||
-      elderTasks.find((task) => task.defaultCaregiverId && getCaregiverById(task.defaultCaregiverId)?.floor === elder.floor)?.defaultCaregiverId ||
-      "";
-    const fallbackCaregiver = directorPlanFloorStaff.length ? directorPlanFloorStaff[elderIndex % directorPlanFloorStaff.length] : null;
-    const targetCaregiver = directorPlanFloorStaff.find((caregiver) => caregiver.id === matchedCaregiverId) || fallbackCaregiver;
+    const matchedCaregiverId = elder.assignedCaregiverId || "";
+    const targetCaregiver = directorPlanFloorStaff.find((caregiver) => caregiver.id === matchedCaregiverId) || null;
 
     if (targetCaregiver) {
+      const resident = directorPlanResidents.find((item) => item.id === elder.id);
+      if (resident) {
+        resident.currentCaregiverId = targetCaregiver.id;
+        resident.currentCaregiverName = targetCaregiver.name;
+      }
       targetCaregiver.rooms.push({
         room: elder.room,
         elderName: elder.name,
@@ -5521,6 +7795,15 @@ export function selectors() {
       });
     }
   });
+  const unassignedPlanFloorResidents = selectedPlanFloorElders
+    .filter((elder) => !elder.assignedCaregiverId || !getCaregiverById(elder.assignedCaregiverId))
+    .map((elder) => ({
+      room: elder.room,
+      elderName: elder.name,
+      elderId: elder.id,
+      floor: elder.floor,
+      level: elder.level,
+    }));
 
   const residentSearch = state.ui.directorResidentSearch.trim();
   const visibleDirectorPlanResidents = allDirectorPlanResidents.filter((resident) => {
@@ -5625,7 +7908,35 @@ export function selectors() {
   const dailyReportTemplateOptions = Object.values(state.dailyReportTemplates || {}).map((tpl) => ({
     value: tpl.id,
     label: tpl.title || "未命名模板",
+    template: tpl,
   }));
+  const dailyReportTemplateHierarchy = (() => {
+    const templates = Object.values(state.dailyReportTemplates || {});
+    const baseCatalogItems = state.ui.directorReportTemplateImportCatalog?.items || [];
+    const baseById = new Map(
+      baseCatalogItems
+        .filter((item) => item?.id && (item.templateType || "base") === "base")
+        .map((item) => [item.id, normalizeCloudDailyReportTemplate(item)]),
+    );
+    const groups = new Map();
+    templates.forEach((template) => {
+      const baseId = template.baseTemplateId || "";
+      const baseTemplate = baseById.get(baseId);
+      const groupKey = baseId || "__no_base__";
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, {
+          id: baseId,
+          title: baseTemplate?.title || (baseId ? `基础模板 ${baseId}` : "未关联基础模板"),
+          templates: [],
+        });
+      }
+      groups.get(groupKey).templates.push(template);
+    });
+    return Array.from(groups.values()).map((group) => ({
+      ...group,
+      templates: group.templates.sort((left, right) => String(left.title || "").localeCompare(String(right.title || ""), "zh-CN")),
+    }));
+  })();
   const directorDispatchElderOptions = [...state.elders]
     .sort((left, right) => {
       if (left.floor !== right.floor) return Number(left.floor) - Number(right.floor);
@@ -5646,6 +7957,26 @@ export function selectors() {
     completedCount: completedTasks.length,
     photoCount: pendingTasks.filter((task) => task.requirePhoto).length,
     manualCount: pendingTasks.filter((task) => task.assignmentLabel === "院长发布" || task.assignmentLabel === "院长调整").length,
+  };
+  const inventoryItems = (state.inventory || []).filter((item) => item.status !== "deleted");
+  const inventoryUsageFilters = state.ui.inventoryUsageFilters || {};
+  const inventoryUsages = (state.inventoryUsages || []).filter((usage) => {
+    const filterDate = inventoryUsageFilters.recordDate || "";
+    const filterName = String(inventoryUsageFilters.itemName || "").trim();
+    if (filterDate && !String(usage.usedAt || usage.createdAt || "").startsWith(filterDate)) return false;
+    if (filterName && !String(usage.itemName || "").includes(filterName)) return false;
+    return true;
+  });
+  const selectedInventoryItem = state.ui.inventoryItemActionsId
+    ? inventoryItems.find((item) => item.id === state.ui.inventoryItemActionsId) || null
+    : null;
+  const selectedInventoryItemUsages = selectedInventoryItem
+    ? (state.inventoryUsages || []).filter((usage) => usage.itemId === selectedInventoryItem.id || usage.itemName === selectedInventoryItem.name)
+    : [];
+  const inventorySummary = {
+    types: inventoryItems.length,
+    warningCount: inventoryItems.filter((item) => item.quantity <= item.warningQuantity).length,
+    usageCount: inventoryUsages.length,
   };
 
   const directorAssignmentSummary = {
@@ -5685,6 +8016,19 @@ export function selectors() {
     quickExceptionNotes,
     taskRecordDialog: state.ui.taskRecordDialog,
     caregiverTimelineFullscreen: Boolean(state.ui.caregiverTimelineFullscreen),
+    caregiverTimelineReadonly: Boolean(state.ui.caregiverTimelineReadonly),
+    caregiverRecordDetail: state.ui.selectedCaregiverReportElderId
+      ? buildCaregiverRecordDetail(state.ui.selectedCaregiverReportElderId)
+      : null,
+    caregiverTaskRecordDate: activeRecordDate,
+    caregiverTaskSyncStatus: {
+      loading: Boolean(state.cloud.tasksLoading),
+      error: state.cloud.tasksError || "",
+      fetchedAt: state.cloud.tasksFetchedAt || "",
+      caregiverId: state.caregiver?.id || "",
+      institutionId: getCurrentSessionInstitutionId(),
+      detail: state.cloud.lastCaregiverTaskSync || null,
+    },
     elderTasks,
     elderVitals: state.vitals.filter((item) => item.elderId === state.ui.selectedElderId).slice(0, 4),
     pendingTasks,
@@ -5692,6 +8036,7 @@ export function selectors() {
     completedTasks,
     floorRooms,
     filteredHistory,
+    caregiverRecordWorkspace,
     floorSummaries,
     activeBatchJobs: state.batchJobs.filter((item) => !item.completed),
     unreadMessages: state.messages.filter((item) => !item.read).length,
@@ -5699,6 +8044,7 @@ export function selectors() {
     directorSelectedFloor,
     directorSelectedTimeline,
     caregiverLoads,
+    directorAttendance,
     allDirectorTasks,
     unassignedTasks,
     assignedTasks,
@@ -5719,6 +8065,7 @@ export function selectors() {
     elderPlanSummaries,
     directorPlanFloors: directorPlanFloorCards,
     directorPlanFloorStaff,
+    unassignedPlanFloorResidents,
     directorPlanRooms: visibleDirectorPlanResidents,
     directorPlanResidentOptions: allDirectorPlanResidents,
     selectedDirectorPlan: selectedDirectorPlanRecord,
@@ -5738,13 +8085,15 @@ export function selectors() {
     directorTaskOverview,
     directorCaregiverStatistics,
     selectedDirectorCaregiverStat,
+    directorAnomalyDate,
     directorExceptionReports,
-    directorReadExceptionReports,
     cloudStatus,
     dailyReportTemplate: Object.values(state.dailyReportTemplates || {})[0],
     dailyReportTemplates: state.dailyReportTemplates,
     dailyReportTemplateOptions,
+    dailyReportTemplateHierarchy,
     directorReportTemplateDraft: state.ui.directorReportTemplateDraft,
+    directorReportTemplateEditingId: state.ui.directorReportTemplateEditingId || "",
     directorReportTemplateTransient: state.ui.directorReportTemplateTransient || { newSectionTitle: "", newItems: {} },
     directorReportTemplateScheduleSectionId: state.ui.directorReportTemplateScheduleSectionId,
     directorReportTemplateImport: buildReportTemplateImportView(),
@@ -5766,6 +8115,15 @@ export function selectors() {
     directorAssignmentSummary,
     directorCoreSummary,
     dispatchSummary,
+    inventoryItems,
+    inventoryUsages,
+    inventorySummary,
+    inventoryItemDraft: state.ui.inventoryItemDraft,
+    inventoryStockAdjustDraft: state.ui.inventoryStockAdjustDraft,
+    inventoryItemActions: selectedInventoryItem,
+    inventoryItemActionUsages: selectedInventoryItemUsages,
+    inventoryUsageFilters,
+    inventoryUsageDraft: state.ui.inventoryUsageDraft,
   };
 }
 

@@ -34,6 +34,11 @@ function resolveDefaultApiKey() {
 }
 
 function readOverride(key, fallback) {
+  const runtimeInfo = readNativeRuntimeInfo();
+  if (runtimeInfo.packageName) {
+    return fallback;
+  }
+
   try {
     const value = window.localStorage.getItem(key);
     return value ? String(value).trim() : fallback;
@@ -43,9 +48,24 @@ function readOverride(key, fallback) {
 }
 
 export function getCloudApiConfig() {
+  const runtimeInfo = readNativeRuntimeInfo();
+  const runtimeBaseUrl = resolveDefaultBaseUrl();
+  const runtimeApiKey = resolveDefaultApiKey();
+
+  if (runtimeInfo.packageName && runtimeBaseUrl && runtimeApiKey) {
+    try {
+      window.localStorage.removeItem("elderCloudBaseUrl");
+      window.localStorage.removeItem("elderCloudApiKey");
+    } catch (_) {}
+    return {
+      baseUrl: runtimeBaseUrl.replace(/\/+$/, ""),
+      apiKey: runtimeApiKey,
+    };
+  }
+
   return {
-    baseUrl: readOverride("elderCloudBaseUrl", resolveDefaultBaseUrl()).replace(/\/+$/, ""),
-    apiKey: readOverride("elderCloudApiKey", resolveDefaultApiKey()),
+    baseUrl: readOverride("elderCloudBaseUrl", runtimeBaseUrl).replace(/\/+$/, ""),
+    apiKey: readOverride("elderCloudApiKey", runtimeApiKey),
   };
 }
 
@@ -139,14 +159,7 @@ export async function requestJson(path, init = {}) {
   return payload;
 }
 
-export async function uploadCareRecord(record) {
-  return requestJson("/api/care-records", {
-    method: "POST",
-    body: JSON.stringify(record),
-  });
-}
-
-export async function fetchCareRecords(filters = {}) {
+export async function fetchCaregiverTaskRecords(filters = {}) {
   const search = new URLSearchParams();
 
   Object.entries(filters).forEach(([key, value]) => {
@@ -155,7 +168,49 @@ export async function fetchCareRecords(filters = {}) {
   });
 
   const suffix = search.toString() ? `?${search.toString()}` : "";
-  return requestJson(`/api/care-records${suffix}`);
+  return requestJson(`/api/caregiver-task-records${suffix}`);
+}
+
+export async function fetchAttendanceRecords(filters = {}) {
+  const search = new URLSearchParams();
+
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/attendance-records${suffix}`);
+}
+
+export async function fetchSyncStatus(filters = {}) {
+  const search = new URLSearchParams();
+
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    if (key === "known" && typeof value === "object") {
+      search.set(key, JSON.stringify(value));
+      return;
+    }
+    if (Array.isArray(value)) {
+      search.set(key, value.join(","));
+      return;
+    }
+    search.set(key, String(value));
+  });
+
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/sync/status${suffix}`);
+}
+
+export async function upsertAttendanceRecord(payload) {
+  const search = new URLSearchParams();
+  if (payload?.institutionId) search.set("institutionId", String(payload.institutionId));
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/attendance-records${suffix}`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function uploadDailyReportTemplate(template) {
@@ -203,6 +258,13 @@ export async function uploadPublishedTasksBulk(tasks = []) {
   });
 }
 
+export async function assignElderCaregiver(payload) {
+  return requestJson("/api/elder-assignment", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function fetchPublishedTasks(filters = {}) {
   const search = new URLSearchParams();
 
@@ -213,25 +275,6 @@ export async function fetchPublishedTasks(filters = {}) {
 
   const suffix = search.toString() ? `?${search.toString()}` : "";
   return requestJson(`/api/tasks${suffix}`);
-}
-
-export async function uploadInstitutionState(snapshot) {
-  return requestJson("/api/institution-state", {
-    method: "POST",
-    body: JSON.stringify(snapshot),
-  });
-}
-
-export async function fetchInstitutionState(filters = {}) {
-  const search = new URLSearchParams();
-
-  Object.entries(filters).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === "") return;
-    search.set(key, String(value));
-  });
-
-  const suffix = search.toString() ? `?${search.toString()}` : "";
-  return requestJson(`/api/institution-state${suffix}`);
 }
 
 export async function fetchLatestAppRelease(filters = {}) {
@@ -253,12 +296,26 @@ export async function createAuthUser(payload) {
   });
 }
 
+export async function updateAuthUser(userId, payload) {
+  return requestJson(`/api/auth/users/${encodeURIComponent(userId)}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function fetchAuthUsers(institutionId) {
   return requestJson(`/api/auth/users?institutionId=${encodeURIComponent(institutionId)}`);
 }
 
 export async function disableAuthUser(userId) {
   return requestJson(`/api/auth/users/${encodeURIComponent(userId)}/disable`, { method: "PUT" });
+}
+
+export async function resetAuthUserPassword(userId, password) {
+  return requestJson(`/api/auth/users/${encodeURIComponent(userId)}/reset-password`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
 }
 
 export async function fetchCaregivers(filters = {}) {
@@ -271,6 +328,29 @@ export async function fetchCaregivers(filters = {}) {
   return requestJson(`/api/caregivers${suffix}`);
 }
 
+export async function fetchElders(filters = {}) {
+  const search = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/elders${suffix}`);
+}
+
+export async function updateElder(id, payload, filters = {}) {
+  const search = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/elders/${encodeURIComponent(id)}/update${suffix}`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function createCaregiver(payload) {
   return requestJson("/api/caregivers", { method: "POST", body: JSON.stringify(payload) });
 }
@@ -281,20 +361,6 @@ export async function updateCaregiver(id, payload) {
 
 export async function deleteCaregiver(id) {
   return requestJson(`/api/caregivers/${encodeURIComponent(id)}`, { method: "DELETE" });
-}
-
-export async function createTaskCompletion(payload) {
-  return requestJson("/api/task-completions", { method: "POST", body: JSON.stringify(payload) });
-}
-
-export async function fetchTaskCompletions(filters = {}) {
-  const search = new URLSearchParams();
-  Object.entries(filters).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === "") return;
-    search.set(key, String(value));
-  });
-  const suffix = search.toString() ? `?${search.toString()}` : "";
-  return requestJson(`/api/task-completions${suffix}`);
 }
 
 export async function createVital(payload) {
@@ -312,7 +378,10 @@ export async function fetchVitals(filters = {}) {
 }
 
 export async function createAnomaly(payload) {
-  return requestJson("/api/anomalies", { method: "POST", body: JSON.stringify(payload) });
+  const search = new URLSearchParams();
+  if (payload?.institutionId) search.set("institutionId", String(payload.institutionId));
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/anomalies${suffix}`, { method: "POST", body: JSON.stringify(payload) });
 }
 
 export async function fetchAnomalies(filters = {}) {
@@ -327,6 +396,34 @@ export async function fetchAnomalies(filters = {}) {
 
 export async function updateAnomaly(id, payload) {
   return requestJson(`/api/anomalies/${encodeURIComponent(id)}/update`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function fetchInventoryItems(filters = {}) {
+  const search = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/inventory/items${suffix}`);
+}
+
+export async function upsertInventoryItem(payload) {
+  return requestJson("/api/inventory/items", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function fetchInventoryUsages(filters = {}) {
+  const search = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    search.set(key, String(value));
+  });
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  return requestJson(`/api/inventory/usages${suffix}`);
+}
+
+export async function createInventoryUsage(payload) {
+  return requestJson("/api/inventory/usages", { method: "POST", body: JSON.stringify(payload) });
 }
 
 export async function updateInstitution(payload) {

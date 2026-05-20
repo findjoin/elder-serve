@@ -21,7 +21,7 @@ export function renderRoomSelectPage({ state, selectors }) {
               .map(
                 (room) => `
                   <article class="room-row">
-                    <button class="room-row__main" data-action="choose-room" data-value="${room.room}">
+                    <button class="room-row__main" data-action="choose-room" data-value="${room.elderId}" data-room="${room.room}">
                       <span class="${getRoomTone(room.type)}"></span>
                       <span class="room-row__label">
                         <strong>${room.room} ${room.elderName}</strong>

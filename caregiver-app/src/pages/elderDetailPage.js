@@ -8,7 +8,7 @@ function renderTimelineFullscreen(selectors) {
     <section class="caregiver-timeline-fullscreen" role="dialog" aria-modal="true">
       <header class="caregiver-timeline-fullscreen__head">
         <div>
-          <strong>今日时间轴</strong>
+          <strong>我的任务</strong>
           <small>${selectors.elderTasks.length} 项任务</small>
         </div>
         <button class="icon-button" type="button" data-action="close-caregiver-timeline-fullscreen" aria-label="退出全屏">
@@ -79,7 +79,7 @@ export function renderElderDetailPage({ selectors }) {
 
       <article class="detail-card detail-card--timeline">
         <div class="detail-card__row detail-card__row--timeline-head">
-          <strong>今日时间轴</strong>
+          <strong>我的任务</strong>
           <span class="timeline-head-actions">
             <small>${selectors.elderTasks.length} 项任务</small>
             <button class="icon-button timeline-fullscreen-button" type="button" data-action="open-caregiver-timeline-fullscreen" aria-label="全屏查看时间轴">

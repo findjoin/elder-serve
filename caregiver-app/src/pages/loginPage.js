@@ -59,7 +59,7 @@ function renderDevLoginDialog(state) {
       <div class="login-modal__dialog">
         <h2>开发者入口</h2>
         <div class="login-modal__content">
-          <span>当前测试养老院：青禾镇颐养护理院</span>
+          <span>当前测试养老院：福乐镇智慧养老院</span>
           <span>选择账号后将通过真实云端登录接口进入对应端。</span>
         </div>
         <div class="dev-login-list">
@@ -96,7 +96,7 @@ function renderInfoDialog(state, runtimeInfo) {
     },
     about: {
       title: "关于我们",
-      body: "<strong>青禾镇颐养护理院</strong><span>面向乡镇养老院的护理记录、任务分配和日报归档系统。</span>",
+      body: "<strong>福乐镇智慧养老院</strong><span>面向乡镇养老院的护理记录、任务分配和日报归档系统。</span>",
     },
     contact: {
       title: "联系开发者",
@@ -184,7 +184,7 @@ export function renderLoginPage({ state } = {}) {
         <div class="role-select-page__logo">
           ${renderIcon("home")}
         </div>
-        <h1>青禾镇颐养护理院</h1>
+        <h1>福乐镇智慧养老院</h1>
         <p>科技守护，情暖夕阳</p>
       </div>
 

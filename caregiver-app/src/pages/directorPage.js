@@ -14,6 +14,28 @@ function renderDirectorHeader(title, date, actionsHtml = "") {
   `;
 }
 
+function renderDirectorAnomalyDateFilter(date) {
+  return `
+    <article class="director-card director-card--dense director-audit-filter">
+      <div class="director-card__head director-card__head--compact">
+        <div>
+          <strong>按日期查看异常</strong>
+          <p>异常状态只显示所选日期的任务卡异常和快速异常。</p>
+        </div>
+      </div>
+      <div class="director-audit-filter__group">
+        <span>日期</span>
+        <div class="director-chip-row director-chip-row--with-input">
+          <label class="director-date-field">
+            <small>选择日期</small>
+            <input type="date" value="${date}" data-director-anomaly-date />
+          </label>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
 function renderStatusPill(text, tone) {
   return `<span class="status-pill status-pill--${tone}">${text}</span>`;
 }
@@ -281,6 +303,218 @@ function getCareRecordDate(record = {}) {
   return record.recordDate || String(record.submittedAt || record.updatedAt || "").slice(0, 10);
 }
 
+function isDailyReportTask(task = {}) {
+  const source = String(task.source || task.templateGroup || task.assignmentMode || "");
+  return (
+    source.includes("daily") ||
+    source.includes("report") ||
+    source.includes("template") ||
+    Boolean(task.templateId)
+  );
+}
+
+function getTaskItemKeys(task = {}) {
+  const rawKeys = [
+    task.planItemId,
+    task.templateItemId,
+    task.itemId,
+    task.rawItemId,
+    task.templateId,
+    String(task.templateId || "").split(":").pop(),
+    task.title,
+  ];
+  return Array.from(new Set(rawKeys.map((item) => String(item || "").trim()).filter(Boolean)));
+}
+
+function getTemplateItemKeys(item = {}) {
+  const rawKeys = [item.id, item.key, item.itemId, item.rawItemId, item.templateItemId, item.label, item.title];
+  return Array.from(new Set(rawKeys.map((value) => String(value || "").trim()).filter(Boolean)));
+}
+
+function isReportTaskCompleted(task = {}) {
+  return task.status === "completed" || Boolean(task.completedAt);
+}
+
+function getReportTemplateItemFrequencyDays(item = {}) {
+  const frequencyDays = Math.max(1, Number(item.frequencyDays || item.frequency || 1));
+  return Number.isFinite(frequencyDays) ? frequencyDays : 1;
+}
+
+function isReportTemplateItemDue(item = {}, dateString = "") {
+  const frequencyDays = getReportTemplateItemFrequencyDays(item);
+  if (frequencyDays <= 1) return true;
+  const day = Number(String(dateString || "").slice(-2)) || 1;
+  return (day - 1) % frequencyDays === 0;
+}
+
+function getReportTemplateItemPeriods(item = {}, daysInMonth = 31) {
+  const frequencyDays = getReportTemplateItemFrequencyDays(item);
+  const safeDays = Math.max(1, Number(daysInMonth) || 31);
+  const periods = [];
+
+  for (let start = 1; start <= safeDays; start += frequencyDays) {
+    const span = Math.min(frequencyDays, safeDays - start + 1);
+    periods.push({
+      start,
+      end: start + span - 1,
+      span,
+      days: Array.from({ length: span }, (_, index) => start + index),
+    });
+  }
+
+  return periods;
+}
+
+function getTaskWindowStartMinutes(task = {}) {
+  const value = String(task.window || task.schedule || task.timeWindow || "");
+  const match = /(\d{1,2}):(\d{2})/.exec(value);
+  if (!match) return 0;
+  return (Number(match[1]) || 0) * 60 + (Number(match[2]) || 0);
+}
+
+function isReportTaskNotDue(task = {}, dateString = "", nowDate = "", nowMinutes = 24 * 60) {
+  if (!nowDate || dateString < nowDate) return false;
+  if (dateString > nowDate) return true;
+  return getTaskWindowStartMinutes(task) > nowMinutes;
+}
+
+function getMonthPrefixFromDate(dateString = "") {
+  const parsed = parseCalendarDate(dateString);
+  if (!parsed) return "";
+  return `${parsed.year}-${padCalendarNumber(parsed.month)}`;
+}
+
+function getCurrentTimeMinutes() {
+  const now = new Date();
+  return now.getHours() * 60 + now.getMinutes();
+}
+
+function getElderReportTemplate(elder = {}, state = {}) {
+  const templates = state.dailyReportTemplates || {};
+  return templates[elder.reportTemplateId] || Object.values(templates).find((tpl) => tpl.id === elder.reportTemplateId) || null;
+}
+
+function getTemplateItems(template = {}) {
+  return (template.sections || []).flatMap((section) =>
+    (section.items || []).map((item) => ({
+      ...item,
+      sectionTitle: section.title || "",
+    })),
+  );
+}
+
+function buildDailyReportMetrics(dayTasks = [], dateString = "", today = "", nowMinutes = 24 * 60) {
+  const reportGroups = new Map();
+
+  (dayTasks || []).forEach((task) => {
+    const elderKey = task.elderId || task.elderName || "";
+    if (!elderKey) return;
+    if (!reportGroups.has(elderKey)) reportGroups.set(elderKey, []);
+    reportGroups.get(elderKey).push(task);
+  });
+
+  const reportRows = Array.from(reportGroups.entries()).map(([elderKey, tasks]) => {
+    const dueTasks = tasks.filter((task) => !isReportTaskNotDue(task, dateString, today, nowMinutes));
+    const completedTaskCount = dueTasks.filter(isReportTaskCompleted).length;
+    const pendingTaskCount = Math.max(0, dueTasks.length - completedTaskCount);
+    return {
+      elderKey,
+      tasks,
+      dueTasks,
+      taskCount: dueTasks.length,
+      completedTaskCount,
+      pendingTaskCount,
+      isCompleted: tasks.length > 0 && dueTasks.length === tasks.length && pendingTaskCount === 0,
+    };
+  });
+
+  return {
+    reportRows,
+    reportCount: reportRows.length,
+    completedReportCount: reportRows.filter((row) => row.isCompleted).length,
+    pendingReportCount: reportRows.filter((row) => !row.isCompleted).length,
+    taskCount: reportRows.reduce((sum, row) => sum + row.taskCount, 0),
+    completedTaskCount: reportRows.reduce((sum, row) => sum + row.completedTaskCount, 0),
+    pendingTaskCount: reportRows.reduce((sum, row) => sum + row.pendingTaskCount, 0),
+  };
+}
+
+function buildMonthlyReportIndex(state, selectors) {
+  const current = getCalendarMonth(state.ui.directorAuditDate, state.director.date);
+  const monthPrefix = `${current.year}-${padCalendarNumber(current.month)}`;
+  const today = state.director.date || "";
+  const nowMinutes = getCurrentTimeMinutes();
+  const daysInMonth = new Date(current.year, current.month, 0).getDate();
+  const tasks = (state.tasks || []).filter((task) => String(task.recordDate || "").startsWith(monthPrefix) && isDailyReportTask(task));
+  const tasksByDate = new Map();
+  const elders = [...(state.elders || [])].sort((left, right) => {
+    if (Number(left.floor) !== Number(right.floor)) return Number(left.floor) - Number(right.floor);
+    return String(left.room || "").localeCompare(String(right.room || ""), "zh-CN", { numeric: true });
+  });
+
+  tasks.forEach((task) => {
+    const date = task.recordDate || "";
+    if (!date) return;
+    if (!tasksByDate.has(date)) tasksByDate.set(date, []);
+    tasksByDate.get(date).push(task);
+  });
+
+  const daySummaries = new Map();
+  Array.from({ length: daysInMonth }, (_, index) => index + 1).forEach((day) => {
+    const date = getCalendarDateKey(current.year, current.month, day);
+    const dayTasks = tasksByDate.get(date) || [];
+    const metrics = buildDailyReportMetrics(dayTasks, date, today, nowMinutes);
+    daySummaries.set(date, {
+      date,
+      day,
+      isFuture: Boolean(today && date > today),
+      total: metrics.reportCount,
+      completed: metrics.completedReportCount,
+      pending: metrics.pendingReportCount,
+      taskCount: metrics.taskCount,
+      completedTaskCount: metrics.completedTaskCount,
+      pendingTaskCount: metrics.pendingTaskCount,
+      tasks: dayTasks,
+    });
+  });
+
+  const elderSheets = elders.map((elder) => {
+    const template = getElderReportTemplate(elder, state) || selectors.dailyReportTemplate || {};
+    const templateItems = getTemplateItems(template);
+    const elderTasks = tasks.filter((task) => task.elderId === elder.id);
+    const tasksByDateAndItem = new Map();
+    elderTasks.forEach((task) => {
+      const date = task.recordDate || "";
+      if (!date) return;
+      getTaskItemKeys(task).forEach((key) => {
+        tasksByDateAndItem.set(`${date}|${key}`, task);
+      });
+    });
+    return {
+      elder,
+      template,
+      templateItems,
+      tasks: elderTasks,
+      tasksByDateAndItem,
+    };
+  });
+
+  return {
+    year: current.year,
+    month: current.month,
+    monthPrefix,
+    institutionName: state.institution?.name || "养老院",
+    caregivers: state.caregivers || [],
+    today,
+    nowMinutes,
+    daysInMonth,
+    tasks,
+    tasksByDate,
+    daySummaries,
+    elderSheets,
+  };
+}
+
 function getResponsibleCaregiverForElder(elder, state) {
   const task =
     (state.tasks || []).find((item) => item.elderId === elder.id && item.caregiverId) ||
@@ -304,32 +538,45 @@ function getResponsibleCaregiverForElder(elder, state) {
 }
 
 function buildInboxDaySummary(dateString, state, reports) {
+  const index = buildMonthlyReportIndex(state, {});
+  const dayTasks = (state.tasks || []).filter((task) => task.recordDate === dateString && isDailyReportTask(task));
   const today = state.director.date || "";
-  const isFuture = today && dateString > today;
-  const expectedElders = isFuture ? [] : state.elders || [];
-  const dayReports = (reports || []).filter((item) => getCareRecordDate(item) === dateString);
-  const receivedByElder = new Map();
-
-  dayReports.forEach((item) => {
-    const key = item.elderId || item.id;
-    if (!key || receivedByElder.has(key)) return;
-    receivedByElder.set(key, item);
-  });
-
-  const missing = expectedElders
-    .filter((elder) => !receivedByElder.has(elder.id))
-    .map((elder) => ({
-      ...elder,
-      caregiver: getResponsibleCaregiverForElder(elder, state),
-    }));
+  const nowMinutes = getCurrentTimeMinutes();
+  const metrics = buildDailyReportMetrics(dayTasks, dateString, today, nowMinutes);
+  const elderRows = (state.elders || [])
+    .map((elder) => {
+      const allTasks = dayTasks.filter((task) => task.elderId === elder.id);
+      const tasks = allTasks.filter((task) => !isReportTaskNotDue(task, dateString, today, nowMinutes));
+      const completed = tasks.filter(isReportTaskCompleted).length;
+      return {
+        ...elder,
+        caregiver: getResponsibleCaregiverForElder(elder, state),
+        reportTaskCount: allTasks.length,
+        taskCount: tasks.length,
+        completedCount: completed,
+        pendingCount: Math.max(0, tasks.length - completed),
+        reportCompleted: allTasks.length > 0 && tasks.length === allTasks.length && tasks.length === completed,
+      };
+    })
+    .filter((elder) => elder.reportTaskCount > 0);
 
   return {
     date: dateString,
-    isFuture,
-    expectedCount: expectedElders.length,
-    receivedCount: receivedByElder.size,
-    missingCount: missing.length,
-    missing,
+    isFuture: Boolean(today && dateString > today),
+    expectedCount: metrics.reportCount,
+    receivedCount: metrics.completedReportCount,
+    missingCount: metrics.pendingReportCount,
+    missing: elderRows.filter((elder) => !elder.reportCompleted),
+    elderRows,
+    reportCount: metrics.reportCount,
+    completedReportCount: metrics.completedReportCount,
+    pendingReportCount: metrics.pendingReportCount,
+    taskCount: metrics.taskCount,
+    completedCount: metrics.completedReportCount,
+    pendingCount: metrics.pendingReportCount,
+    completedTaskCount: metrics.completedTaskCount,
+    pendingTaskCount: metrics.pendingTaskCount,
+    monthIndex: index,
   };
 }
 
@@ -372,23 +619,13 @@ function getElderMonthReportMap(elderId, year, month, targetDay, allReports) {
 function getInboxDayTone(summary) {
   if (summary.isFuture) return "future";
   if (!summary.expectedCount) return "empty";
-  if (summary.missingCount === 0) return "complete";
-  if (summary.receivedCount > 0) return "partial";
-  return "missing";
+  return "partial";
 }
 
 function renderInboxCalendarDay(dateString, dayNumber, state, reports) {
   const summary = buildInboxDaySummary(dateString, state, reports);
   const tone = getInboxDayTone(summary);
   const selected = state.ui.directorInboxSelectedDate === dateString || state.ui.directorAuditDate === dateString;
-  const statusLabel =
-    tone === "future"
-      ? ""
-      : summary.expectedCount
-        ? summary.missingCount
-          ? `${summary.receivedCount}/${summary.expectedCount}`
-          : "收齐"
-        : "";
 
   return `
     <button
@@ -397,20 +634,17 @@ function renderInboxCalendarDay(dateString, dayNumber, state, reports) {
       data-value="${dateString}"
     >
       <strong>${dayNumber}</strong>
-      ${statusLabel ? `<span>${statusLabel}</span>` : ""}
     </button>
   `;
 }
 
 function renderDirectorInboxCalendar(state, selectors) {
-  const reports = selectors.directorCloudReports || [];
   const current = getCalendarMonth(state.ui.directorAuditDate, state.director.date);
+  const monthIndex = buildMonthlyReportIndex(state, selectors);
   const firstDay = new Date(current.year, current.month - 1, 1);
   const daysInMonth = new Date(current.year, current.month, 0).getDate();
   const leadingBlankCount = firstDay.getDay();
-  const monthPrefix = `${current.year}-${padCalendarNumber(current.month)}`;
-  const monthReports = reports.filter((item) => getCareRecordDate(item).startsWith(monthPrefix));
-  const monthReceivedCount = new Set(monthReports.map((item) => `${getCareRecordDate(item)}:${item.elderId || item.id}`)).size;
+  const monthReportCount = Array.from(monthIndex.daySummaries.values()).reduce((sum, item) => sum + item.total, 0);
   const previousMonth = shiftCalendarMonth(state.ui.directorAuditDate, state.director.date, -1);
   const nextMonth = shiftCalendarMonth(state.ui.directorAuditDate, state.director.date, 1);
   const fetchedAt = selectors.cloudStatus?.fetchedAt || "";
@@ -419,7 +653,7 @@ function renderDirectorInboxCalendar(state, selectors) {
     ...Array.from({ length: leadingBlankCount }, (_, index) => `<span class="director-inbox-day director-inbox-day--blank" aria-hidden="true" data-blank="${index}"></span>`),
     ...Array.from({ length: daysInMonth }, (_, index) => {
       const day = index + 1;
-      return renderInboxCalendarDay(getCalendarDateKey(current.year, current.month, day), day, state, reports);
+      return renderInboxCalendarDay(getCalendarDateKey(current.year, current.month, day), day, state, []);
     }),
   ];
 
@@ -434,7 +668,7 @@ function renderDirectorInboxCalendar(state, selectors) {
           <button class="director-inline-link" data-action="refresh-cloud-care-records">
             ${selectors.cloudStatus.loading ? "刷新中" : "手动刷新"}
           </button>
-          ${renderStatusPill(`本月已收 ${monthReceivedCount}`, "success")}
+          ${renderStatusPill(`本月日报 ${monthReportCount} 份`, "success")}
         </div>
       </div>
       <div class="director-inbox-calendar__toolbar">
@@ -453,9 +687,8 @@ function renderDirectorInboxCalendar(state, selectors) {
         ${calendarCells.join("")}
       </div>
       <div class="director-inbox-calendar__legend">
-        <span><i class="is-complete"></i>收齐</span>
-        <span><i class="is-partial"></i>缺失</span>
-        <span><i class="is-missing"></i>未收</span>
+        <span><i class="is-partial"></i>已查询到日报任务</span>
+        <span><i class="is-missing"></i>暂无日报任务</span>
       </div>
       ${
         selectors.cloudStatus.error
@@ -471,8 +704,8 @@ function renderDirectorInboxDayDialog(state, selectors) {
   if (!selectedDate) return "";
 
   const summary = buildInboxDaySummary(selectedDate, state, selectors.directorCloudReports || []);
-  const statusTone = summary.isFuture ? "primary" : summary.missingCount ? "warning" : "success";
-  const statusLabel = summary.isFuture ? "未到填写日期" : summary.missingCount ? `缺失 ${summary.missingCount} 份` : "全部收齐";
+  const statusTone = summary.reportCount ? "success" : "warning";
+  const statusLabel = summary.reportCount ? `已查询 ${summary.reportCount} 份日报` : "暂无日报任务";
 
   return `
     <section class="director-inbox-day-modal">
@@ -488,40 +721,15 @@ function renderDirectorInboxDayDialog(state, selectors) {
           </div>
         </div>
 
-        <div class="director-inbox-day-stats">
-          <article>
-            <span>应收</span>
-            <strong>${summary.expectedCount}</strong>
-          </article>
-          <article>
-            <span>已收</span>
-            <strong>${summary.receivedCount}</strong>
-          </article>
-          <article class="${summary.missingCount ? "is-warning" : ""}">
-            <span>未收</span>
-            <strong>${summary.missingCount}</strong>
-          </article>
-        </div>
-
         <div class="director-inbox-missing-list">
-          <strong>未收到报表</strong>
-          ${
-            summary.missing.length
-              ? summary.missing
-                  .map(
-                    (elder) => `
-                      <div class="director-inbox-missing-row">
-                        ${renderAvatar(elder.name)}
-                        <span>
-                          <strong>${elder.floor}F · ${elder.room}室 · ${elder.name}</strong>
-                          <small>负责护工：${elder.caregiver.name}${elder.caregiver.role ? ` · ${elder.caregiver.role}` : ""}</small>
-                        </span>
-                      </div>
-                    `,
-                  )
-                  .join("")
-              : `<div class="empty-state empty-state--soft">这一天所有老人日报都已收到。</div>`
-          }
+          <strong>日报查询</strong>
+          <div class="empty-state empty-state--soft">
+            ${
+              summary.reportCount
+                ? `云端当天共有 ${summary.reportCount} 份老人日报任务记录。导出日报时会按月读取任务卡状态生成勾叉表。`
+                : "云端当天暂无实例模板生成的日报任务记录。可以先手动刷新云端。"
+            }
+          </div>
         </div>
 
         <div class="director-inbox-day-modal__actions">
@@ -531,7 +739,6 @@ function renderDirectorInboxDayDialog(state, selectors) {
             class="button button--primary"
             data-action="open-director-inbox-export"
             data-value="${selectedDate}"
-            ${summary.receivedCount ? "" : "disabled"}
           >导出日报</button>
         </div>
       </div>
@@ -543,8 +750,8 @@ function renderDirectorInboxExportDialog(state, selectors) {
   const exportDate = state.ui.directorInboxExportDate;
   if (!exportDate) return "";
 
-  const records = getInboxDayReports(exportDate, selectors.directorCloudReports || []);
-  const canExport = records.length > 0;
+  const monthIndex = buildMonthlyReportIndex(state, selectors);
+  const canExport = monthIndex.elderSheets.some((item) => item.templateItems.length);
 
   return `
     <section class="director-inbox-export-modal">
@@ -552,16 +759,16 @@ function renderDirectorInboxExportDialog(state, selectors) {
       <div class="director-inbox-export-modal__dialog">
         <div class="director-card__head director-card__head--compact">
           <div>
-            <strong>导出${formatCalendarDateLabel(exportDate)}日报</strong>
+            <strong>导出${getMonthPrefixFromDate(exportDate)}月度日报</strong>
           </div>
-          ${renderStatusPill(`缓存 ${records.length} 份`, records.length ? "success" : "warning")}
+          ${renderStatusPill(`${monthIndex.elderSheets.length} 位老人`, monthIndex.elderSheets.length ? "success" : "warning")}
         </div>
         <div class="director-inbox-export-modal__body">
-          <span>使用当前已刷新到本机的日报数据。</span>
+          <span>根据老人实例模板和本月云端任务卡完成情况生成 A4 护理记录表。</span>
           ${
-            records.length
-              ? `<strong>${records.length} 份日报将合并为监管归档表导出。</strong>`
-              : `<strong>这一天缓存里没有日报，请先手动刷新云端。</strong>`
+            canExport
+              ? `<strong>已完成任务卡显示对号，未完成显示错号，未来或未到时间任务留空。</strong>`
+              : `<strong>当前月份没有可导出的实例模板任务，请先手动刷新云端。</strong>`
           }
         </div>
         <div class="director-inbox-export-modal__actions">
@@ -586,47 +793,13 @@ function renderDirectorInboxExportDialog(state, selectors) {
   `;
 }
 
-function renderMonthlyCompilation(batchDate, allCloudReports, template) {
-  if (!batchDate || !allCloudReports || !allCloudReports.length) return "";
-  if (!template || !(template.sections || []).length) return "";
-
-  const parts = String(batchDate).split("-");
-  const year = parseInt(parts[0], 10);
-  const month = parseInt(parts[1], 10);
-  const targetDay = parseInt(parts[2], 10);
-  const prefix = `${parts[0]}-${parts[1]}`;
-  const monthLabel = `${year}年${month}月`;
-
-  const elders = new Map();
-  (allCloudReports || []).forEach((item) => {
-    const dateStr = getCareRecordDate(item);
-    if (!dateStr || !dateStr.startsWith(prefix)) return;
-    const day = parseInt(dateStr.slice(-2), 10);
-    if (!day || day > targetDay) return;
-    const elderId = item.elderId || item.id;
-    if (!elderId) return;
-    if (!elders.has(elderId)) elders.set(elderId, []);
-    elders.get(elderId).push(item);
-  });
-
-  if (!elders.size) return "";
-
-  const sortedElders = Array.from(elders.entries()).sort(([, a], [, b]) => {
-    const aFloor = Number.parseInt(a[0]?.floorLabel || a[0]?.floor || "0", 10) || 0;
-    const bFloor = Number.parseInt(b[0]?.floorLabel || b[0]?.floor || "0", 10) || 0;
-    if (aFloor !== bFloor) return aFloor - bFloor;
-    const aRoom = Number.parseInt(a[0]?.room || "0", 10) || 0;
-    const bRoom = Number.parseInt(b[0]?.room || "0", 10) || 0;
-    return aRoom - bRoom;
-  });
-
-  return sortedElders
-    .map(([elderId, reports]) => {
-      const dayMap = getElderMonthReportMap(elderId, year, month, targetDay, reports);
-      const firstReport = reports[0] || {};
-      const elderName = firstReport.elderName || elderId;
-      return renderMonthlyCareSheet(elderName, firstReport, dayMap, template, targetDay, monthLabel);
-    })
+function renderMonthlyCompilation(batchDate, state, selectors) {
+  if (!batchDate) return "";
+  const index = buildMonthlyReportIndex(state, selectors);
+  const monthLabel = `${index.year}年${index.month}月`;
+  return index.elderSheets
+    .filter((sheet) => sheet.templateItems.length)
+    .map((sheet) => renderMonthlyCareSheetFromTasks(sheet, index, monthLabel))
     .join("");
 }
 
@@ -634,14 +807,12 @@ function renderDirectorCareRecordPreview(state, selectors) {
   if (!state.ui.directorCareRecordPreviewOpen) return "";
 
   const batchDate = state.ui.directorCareRecordBatchDate;
+  const monthlyContent = batchDate ? renderMonthlyCompilation(batchDate, state, selectors) : "";
+  const useMonthly = Boolean(monthlyContent);
   const records = batchDate
     ? getInboxDayReports(batchDate, selectors.directorCloudReports || [])
     : [selectors.directorCareRecordDraft].filter(Boolean);
-
-  const monthlyContent = batchDate
-    ? renderMonthlyCompilation(batchDate, selectors.directorCloudReports || [], selectors.dailyReportTemplate)
-    : "";
-  const useMonthly = Boolean(monthlyContent);
+  const canExport = useMonthly || records.length > 0;
 
   const title = useMonthly
     ? `${formatCalendarDateLabel(batchDate)} 月度汇总导出`
@@ -649,7 +820,9 @@ function renderDirectorCareRecordPreview(state, selectors) {
       ? `${formatCalendarDateLabel(batchDate)}日报导出`
       : "监管归档表（A4）预览";
 
-  const pillLabel = useMonthly ? `${records.length} 位老人` : `${records.length} 份`;
+  const pillLabel = useMonthly
+    ? `${buildMonthlyReportIndex(state, selectors).elderSheets.filter((sheet) => sheet.templateItems.length).length} 位老人`
+    : `${records.length} 份`;
 
   return `
     <section class="director-care-record-preview">
@@ -670,8 +843,8 @@ function renderDirectorCareRecordPreview(state, selectors) {
         </div>
         <div class="director-care-record-preview__actions">
           <button class="button button--secondary" data-action="close-care-record-preview">关闭</button>
-          <button class="button button--secondary" data-action="export-care-record-image" ${records.length ? "" : "disabled"}>导出图片</button>
-          <button class="button button--primary" data-action="print-care-record" ${records.length ? "" : "disabled"}>导出PDF</button>
+          <button class="button button--secondary" data-action="export-care-record-image" ${canExport ? "" : "disabled"}>导出图片</button>
+          <button class="button button--primary" data-action="print-care-record" ${canExport ? "" : "disabled"}>导出PDF</button>
         </div>
       </div>
     </section>
@@ -1036,12 +1209,6 @@ function renderDirectorTaskOverviewBars(overview) {
   `;
 }
 
-function renderDirectorLiveClock(timeLabel = "") {
-  return `
-    <div class="director-live-clock" data-live-clock>${timeLabel || "--:--"}</div>
-  `;
-}
-
 function renderCommandMetric(label, value, helper, tone = "primary") {
   return `
     <article class="director-command-metric director-command-metric--${tone}">
@@ -1056,6 +1223,29 @@ function renderDirectorStatTaskLine(task, emptyText) {
   if (!task) return `<li>${emptyText}</li>`;
   const elder = task.elder ? `${task.elder.room}室 · ${task.elder.name}` : "未绑定老人";
   return `<li><strong>${task.schedule} ${task.title}</strong><span>${elder}</span></li>`;
+}
+
+function formatShortDateTimeLabel(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/^\d{1,2}:\d{2}/.test(text)) return text.slice(0, 5);
+
+  const parsed = new Date(text.includes("T") ? text : text.replace(" ", "T"));
+  if (!Number.isNaN(parsed.getTime())) {
+    const pad = (number) => String(number).padStart(2, "0");
+    return `${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())} ${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
+  }
+
+  const compactMatch = text.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/);
+  if (compactMatch) return `${compactMatch[1].slice(5)} ${compactMatch[2]}`;
+  return text.length > 16 ? text.slice(0, 16) : text;
+}
+
+function formatDirectorExceptionMeta(report) {
+  const reportedAt = formatShortDateTimeLabel(report.reportedAt);
+  const schedule = formatShortDateTimeLabel(report.schedule);
+  if (reportedAt && schedule && reportedAt !== schedule) return `${reportedAt} · ${schedule}`;
+  return reportedAt || schedule || "";
 }
 
 function renderDirectorCaregiverStatCard(item, selectedId) {
@@ -1112,6 +1302,7 @@ function renderDirectorCaregiverStatDetail(item) {
 }
 
 function renderDirectorExceptionReportCard(report) {
+  const timeMeta = formatDirectorExceptionMeta(report);
   return `
     <article class="director-card director-card--dense director-exception-report">
       <div class="director-card__head director-card__head--compact">
@@ -1119,7 +1310,7 @@ function renderDirectorExceptionReportCard(report) {
           <strong>${report.room}室 · ${report.elderName} · ${report.title}</strong>
           <div class="director-exception-report__meta">
             <span>负责护工：${report.caregiverName}</span>
-            <span>${report.reportedAt ? report.reportedAt.split(" ")[0] + " · " : ""}${report.schedule}</span>
+            ${timeMeta ? `<span>${timeMeta}</span>` : ""}
           </div>
         </div>
         ${renderStatusPill(report.statusLabel, "error")}
@@ -1132,36 +1323,11 @@ function renderDirectorExceptionReportCard(report) {
                 .map((item) =>
                   item.dataUrl
                     ? `<img src="${item.dataUrl}" alt="${item.name || "异常照片"}" />`
-                    : `<span>${item.name || "异常照片"}</span>`,
+                    : `<span>${report.evidencePending ? "照片加载中..." : "照片未同步，请重新上传"}</span>`,
                 )
                 .join("")
-            : '<span>暂无照片</span>'
+            : `<span>${report.evidencePending ? "照片加载中..." : "暂无照片"}</span>`
         }
-      </div>
-      <div class="director-exception-report__actions">
-        <button class="button button--small button--secondary" data-action="mark-exception-read" data-value="${report.id}">标记已读</button>
-      </div>
-    </article>
-  `;
-}
-
-function renderReadExceptionCard(report) {
-  return `
-    <article class="director-card director-card--dense director-exception-report director-exception-report--read">
-      <div class="director-card__head director-card__head--compact">
-        <div>
-          <strong>${report.room}室 · ${report.elderName} · ${report.title}</strong>
-          <div class="director-exception-report__meta">
-            <span>负责护工：${report.caregiverName}</span>
-            <span>${report.reportedAt ? report.reportedAt.split(" ")[0] + " · " : ""}${report.schedule}</span>
-          </div>
-        </div>
-        ${renderStatusPill(report.statusLabel, "muted")}
-      </div>
-      <p class="director-exception-report__note">${report.note}</p>
-      <div class="director-exception-report__actions">
-        <button class="button button--small button--secondary" data-action="restore-read-exception" data-value="${report.id}">还原</button>
-        <button class="button button--small button--danger" data-action="delete-read-exception" data-value="${report.id}">删除</button>
       </div>
     </article>
   `;
@@ -1204,6 +1370,8 @@ export function renderDirectorTaskDetailDialog(task, state = {}) {
             <p><strong>任务：</strong>${task.title}</p>
             <p><strong>护工：</strong>${caregiver.name || "未分配"}</p>
             <p><strong>状态：</strong>${renderStatusPill(status.label, status.tone)}</p>
+            ${task.completedAt ? `<p><strong>打卡时间：</strong>${task.completedAt}</p>` : ""}
+            ${task.recordedAt ? `<p><strong>记录时间：</strong>${task.recordedAt}</p>` : ""}
           </div>
 
           ${task.recordNote ? `
@@ -1397,12 +1565,12 @@ function renderTemplateDraftForm(draft) {
 }
 
 function renderResidentRow(resident) {
-  const taskLabel = resident.hasPlan ? `${resident.enabledCount}项任务` : "未建方案";
-  const statusLabel = !resident.hasPlan
-    ? "待建方案"
-    : resident.manualCount
+  const templateLabel = resident.reportTemplateTitle || (resident.reportTemplateId ? "已分配日报模板" : "未分配日报模板");
+  const statusLabel = resident.manualCount
       ? `${resident.manualCount}项需院长发布`
-      : "常规执行";
+      : resident.reportTemplateId
+        ? "日报模板已分配"
+        : "待分配日报模板";
 
   return `
     <article
@@ -1411,9 +1579,9 @@ function renderResidentRow(resident) {
       data-value="${resident.id}"
     >
       <span class="director-plan-resident-card__title">${resident.room}室 · ${resident.elderName}</span>
-      <span class="director-plan-resident-card__meta">${resident.level} · ${taskLabel}</span>
+      <span class="director-plan-resident-card__meta">${resident.level} · ${templateLabel}</span>
       <span class="director-plan-resident-card__foot">
-        <em class="director-plan-resident-card__status ${resident.manualCount ? "is-warning" : !resident.hasPlan ? "is-muted" : ""}">
+        <em class="director-plan-resident-card__status ${resident.manualCount ? "is-warning" : !resident.reportTemplateId ? "is-muted" : ""}">
           ${statusLabel}
         </em>
         <button
@@ -1430,13 +1598,15 @@ function renderResidentRow(resident) {
   `;
 }
 
-function renderFloorStaffDetail(selectedFloor, staff = []) {
+function renderFloorStaffDetail(selectedFloor, staff = [], unassignedResidents = []) {
   const floorLabel = selectedFloor ? `${selectedFloor.floor}F` : "本层";
+  const assignedStaff = staff.filter((caregiver) => caregiver.rooms.length);
   return `
     <article class="director-panel director-panel--floor-staff">
       <div class="director-panel__head director-panel__head--compact">
         <div>
           <strong>${floorLabel} 任务分配</strong>
+          <small>显示本层常驻护工和已分配到本层的跨楼层护工。</small>
         </div>
         ${renderStatusPill(`${staff.length}名护工`, "success")}
       </div>
@@ -1449,20 +1619,35 @@ function renderFloorStaffDetail(selectedFloor, staff = []) {
                     <div class="director-floor-staff-row" data-drop-caregiver-id="${caregiver.id}">
                       <div class="director-floor-staff-row__main">
                         <strong>${caregiver.name}</strong>
-                        <span>${caregiver.role || "护工"}</span>
+                        <span>${caregiver.role || "护工"}${caregiver.isCrossFloorForSelectedFloor ? ` · 常驻${caregiver.floor}F` : ""}</span>
                       </div>
                       <div class="director-floor-staff-row__rooms">
                         ${
                           caregiver.rooms.length
                             ? caregiver.rooms.map((room) => `<span class="director-floor-room-tag" draggable="true" data-elder-id="${room.elderId}" data-floor="${room.floor}" title="拖动到其他护工即可重新分配">${room.room}室 · ${room.elderName}</span>`).join("")
-                            : "<em>暂无负责房间</em>"
+                            : "<em>本层暂无负责房间</em>"
                         }
                       </div>
                     </div>
                   `,
                 )
                 .join("")
-            : '<div class="empty-state empty-state--soft">当前楼层还没有护工分配。</div>'
+            : '<div class="empty-state empty-state--soft">当前楼层还没有负责人分配。</div>'
+        }
+        ${
+          unassignedResidents.length
+            ? `
+              <div class="director-floor-staff-row director-floor-staff-row--unassigned">
+                <div class="director-floor-staff-row__main">
+                  <strong>未分配</strong>
+                  <span>需要院长指定负责人</span>
+                </div>
+                <div class="director-floor-staff-row__rooms">
+                  ${unassignedResidents.map((room) => `<span class="director-floor-room-tag" draggable="true" data-elder-id="${room.elderId}" data-floor="${room.floor}" title="拖动到护工即可分配">${room.room}室 · ${room.elderName}</span>`).join("")}
+                </div>
+              </div>
+            `
+            : ""
         }
       </div>
     </article>
@@ -1540,121 +1725,6 @@ function renderPlanTimelineEntry(item, { editable = false } = {}) {
   `;
 }
 
-export function renderSelectedPlan(plan, resident, isTimelineOpen = false) {
-  if (!resident) {
-    return `
-      <article class="director-plan-summary director-plan-summary--focus">
-        <div class="director-plan-focus director-plan-focus--empty">
-          <div>
-            <p class="director-plan-focus__eyebrow">护理方案概览</p>
-            <strong>先选择一位老人</strong>
-            <small>楼层和老人选中后，这里会直接显示该老人的护理节奏总览。</small>
-          </div>
-        </div>
-      </article>
-    `;
-  }
-
-  if (!plan) {
-    return `
-      <article class="director-plan-summary director-plan-summary--focus ${isTimelineOpen ? "is-condensed" : ""}">
-        <div class="director-plan-focus">
-          <div>
-            <p class="director-plan-focus__eyebrow">${resident.room}室 · ${resident.elderName}</p>
-            <strong>还没有建立护理方案</strong>
-            <small>${isTimelineOpen ? `${resident.level} · 左侧可直接新建方案` : resident.level}</small>
-          </div>
-          <button type="button" class="button button--small button--primary" data-action="open-plan-draft">新建方案</button>
-        </div>
-        ${
-          isTimelineOpen
-            ? '<div class="director-plan-inline-hint is-open">左侧已展开空白时间轴，可直接创建这位老人的护理方案。</div>'
-            : `
-              <div class="director-plan-quick-stats">
-                <span class="director-plan-quick-stat">${resident.level}</span>
-                <span class="director-plan-quick-stat is-muted">暂无时间轴</span>
-              </div>
-              <div class="empty-state empty-state--soft">
-                先建立基础日常节奏，再根据季节和个体情况补充新增任务。
-              </div>
-            `
-        }
-      </article>
-    `;
-  }
-
-  const timelineItems = [...(plan.timelineTasks?.length ? plan.timelineTasks : plan.items)].sort((left, right) =>
-    String(left.schedule || "").localeCompare(String(right.schedule || "")),
-  );
-  const periodSummary = summarizePlanPeriods(timelineItems);
-  const manualTaskCount = plan.manualCount || 0;
-  const firstItem = timelineItems[0];
-  const firstItemLabel = firstItem ? `${firstItem.schedule} ${firstItem.title || firstItem.template?.title || ""}`.trim() : "暂无时间轴";
-  const expectedPercent = Math.max(0, Math.min(100, Number(plan.expectedPercent || 0)));
-  const actualPercent = Math.max(0, Math.min(100, Number(plan.actualPercent || 0)));
-  const temporaryTaskCount = Number(plan.temporaryTaskCount || 0);
-  const planNote = String(plan.note || "").trim();
-
-  return `
-    <article class="director-plan-summary director-plan-summary--focus ${isTimelineOpen ? "is-condensed" : ""}">
-      <div class="director-plan-focus">
-        <div>
-          <p class="director-plan-focus__eyebrow">${plan.elder.room}室 · ${plan.elder.name}</p>
-          <strong>${isTimelineOpen ? "当前护理方案" : "护理方案总览"}</strong>
-          <small>${isTimelineOpen ? `${plan.level} · 左侧时间轴已展开` : `${plan.level} · ${firstItemLabel}`}</small>
-        </div>
-      </div>
-      <div class="director-plan-note-row">
-        <div class="director-plan-note">${planNote || "暂无建议与注意事项"}</div>
-        <button type="button" class="director-plan-note-edit" data-action="open-director-plan-note-draft" data-value="${plan.elder.id}" aria-label="编辑建议与注意事项">
-          ${renderIcon("edit")}
-        </button>
-      </div>
-      ${
-        !isTimelineOpen
-          ? `
-            <div class="director-plan-progress-compare">
-              <div class="director-plan-progress-compare__head">
-                <strong>今日日报进度</strong>
-                <button type="button" data-action="open-director-plan-temporary-dialog" data-value="${plan.elder.id}">
-                  临时任务 ${temporaryTaskCount}
-                </button>
-              </div>
-              <div class="director-plan-progress-line">
-                <span style="width: ${expectedPercent}%"></span>
-                <i style="width: ${actualPercent}%"></i>
-              </div>
-              <div class="director-plan-progress-legend">
-                <span><em class="is-expected"></em>预期 ${plan.expectedDue || 0}/${plan.dailyTaskTotal || 0}</span>
-                <span><em class="is-actual"></em>实际 ${plan.actualHandled || 0}/${plan.dailyTaskTotal || 0}</span>
-              </div>
-            </div>
-            <div class="director-plan-quick-stats">
-              <span class="director-plan-quick-stat">${plan.enabledCount}项已启用</span>
-              <span class="director-plan-quick-stat ${manualTaskCount ? "is-warning" : ""}">
-                ${manualTaskCount ? `${manualTaskCount}项需手动发布` : "无手动发布"}
-              </span>
-              <span class="director-plan-quick-stat">复核 ${plan.reviewCycle}</span>
-            </div>
-          `
-          : ""
-      }
-      ${
-        !isTimelineOpen && periodSummary.length
-          ? `
-            <div class="director-task-pill-row director-task-pill-row--glance">
-              ${periodSummary.map((item) => `<span class="director-task-pill">${item.label} ${item.count}项</span>`).join("")}
-            </div>
-          `
-          : ""
-      }
-      <div class="director-plan-inline-hint ${isTimelineOpen ? "is-open" : ""}">
-        ${isTimelineOpen ? "点右侧空白处收起。" : "点击下方老人卡，在左侧挂起时间轴。"}
-      </div>
-    </article>
-  `;
-}
-
 function getTaskStatusForTimeline(task) {
   if (task.status === "completed") return { label: "已完成", tone: "success" };
   if (task.status === "risk") return { label: "异常", tone: "error" };
@@ -1665,12 +1735,35 @@ function getTaskStatusForTimeline(task) {
   return { label: "未完成", tone: "muted" };
 }
 
+function hasTimelineEvidence(value) {
+  if (Array.isArray(value)) return value.length > 0;
+  if (!value || value === "[]" || value === "{}") return false;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed.length > 0 : Boolean(parsed);
+    } catch (_) {
+      return value.trim().length > 0;
+    }
+  }
+  return Boolean(value);
+}
+
 function renderDirectorTimelineTaskEntry(task) {
   const status = getTaskStatusForTimeline(task);
-  const hasRecord = !!(task.recordNote || task.recordEvidence);
-  const hasException = !!(task.exceptionNote || task.exceptionEvidence || task.status === "risk");
-  const clickable = hasRecord || hasException;
-  const clickAction = clickable ? `data-action="director-view-task-detail" data-value="${task.id}"` : "";
+  const caregiverName = task.caregiver?.name || task.caregiverName || "未分配护工";
+  const hasRecord = !!(task.recordNote || hasTimelineEvidence(task.recordEvidence) || Number(task.recordEvidenceCount || 0) > 0);
+  const hasException = !!(
+    task.exceptionNote ||
+    task.exceptionType ||
+    task.exceptionReportedAt ||
+    hasTimelineEvidence(task.exceptionEvidence) ||
+    Number(task.exceptionEvidenceCount || 0) > 0 ||
+    task.status === "risk" ||
+    task.status === "refused"
+  );
+  const clickable = true;
+  const clickAction = `data-action="director-view-task-detail" data-value="${task.id}"`;
   const badge = hasException ? `<span class="timeline-badge timeline-badge--alert">!</span>` : hasRecord ? `<span class="timeline-badge timeline-badge--info">i</span>` : "";
 
   return `
@@ -1686,7 +1779,7 @@ function renderDirectorTimelineTaskEntry(task) {
         <div class="director-timeline__card-head">
           <div>
             <strong>${task.title}</strong>
-            <small>${task.source === "report-template" ? "日报模板" : "护理任务"}</small>
+            <small>${task.source === "report-template" ? "日报模板" : "临时任务"} · 负责护工：${caregiverName}</small>
           </div>
           <div class="director-timeline__card-badges">
             ${badge}
@@ -1704,6 +1797,16 @@ function getTimelineTaskDisplayKey(task = {}) {
     task.templateId || "",
     task.title || "",
     task.schedule || task.window || "",
+  ].join("|");
+}
+
+function getTimelineEntryComparableKey(item = {}, resident = {}) {
+  const template = item.template || {};
+  return [
+    item.elderId || resident?.id || "",
+    item.templateId || template.id || "",
+    item.title || template.title || "",
+    item.schedule || item.window || "",
   ].join("|");
 }
 
@@ -1730,7 +1833,6 @@ function getVisibleReportTimelineTasks(tasks = [], resident, state = {}) {
   if (!resident) return [];
   const targetDate = state?.director?.date || "";
   const candidates = tasks.filter((task) => {
-    if (task.source !== "report-template") return false;
     if (task.elderId !== resident.id) return false;
     if (task.status === "cancelled") return false;
     if (targetDate && task.recordDate && task.recordDate !== targetDate) return false;
@@ -1749,14 +1851,11 @@ function getVisibleReportTimelineTasks(tasks = [], resident, state = {}) {
 function renderPlanTimelineSidebar(plan, resident, isOpen = false, tasks = [], state = {}) {
   if (!resident) return "";
 
-  const reportTasks = getVisibleReportTimelineTasks(tasks, resident, state);
-  const planItems = plan ? [...(plan.timelineTasks?.length ? plan.timelineTasks : plan.items)] : [];
-  const allItems = [
-    ...planItems.map((item) => ({ ...item, _type: "plan" })),
-    ...reportTasks.map((task) => ({ ...task, _type: "task" })),
-  ].sort((left, right) => String(left.schedule || "").localeCompare(String(right.schedule || "")));
+  const allItems = getVisibleReportTimelineTasks(tasks, resident, state)
+    .map((task) => ({ ...task, _type: "task" }))
+    .sort((left, right) => String(left.schedule || "").localeCompare(String(right.schedule || "")));
 
-  const hasAnyContent = plan || reportTasks.length > 0;
+  const hasAnyContent = allItems.length > 0;
 
   if (!hasAnyContent) {
     return `
@@ -1765,52 +1864,19 @@ function renderPlanTimelineSidebar(plan, resident, isOpen = false, tasks = [], s
           <div class="director-plan-sidebar__head">
             <div>
               <p>${resident.room}室 · ${resident.elderName}</p>
-              <strong>时间轴未建立</strong>
+              <strong>今日任务时间轴为空</strong>
               <small>${resident.level}</small>
             </div>
           </div>
 
           <div class="empty-state empty-state--soft">
-            先建立这位老人的基础护理方案，再把任务放入时间轴。
-          </div>
-
-          <div class="director-plan-sidebar__actions">
-            <button type="button" class="button button--primary button--block" data-action="open-plan-draft">新建方案</button>
+            云端今天还没有生成这位老人的任务记录。
           </div>
         </div>
       </aside>
     `;
   }
 
-  if (!plan) {
-    return `
-      <aside class="director-plan-sidebar ${isOpen ? "is-open" : ""}">
-        <div class="director-plan-sidebar__panel">
-          <div class="director-plan-sidebar__head">
-            <div>
-              <p>${resident.room}室 · ${resident.elderName}</p>
-              <strong>日报任务时间轴</strong>
-              <small>${resident.level} · ${reportTasks.length}项任务</small>
-            </div>
-          </div>
-
-          <section class="director-plan-sidebar__timeline">
-            <div class="director-plan-sidebar__section-head">
-              <strong>从早到晚</strong>
-              ${renderStatusPill(`${reportTasks.length}项任务`, "success")}
-            </div>
-            <div class="director-plan-timeline director-plan-timeline--sidebar">
-              ${allItems.map((item) => renderDirectorTimelineTaskEntry(item)).join("")}
-            </div>
-          </section>
-
-        </div>
-      </aside>
-    `;
-  }
-
-  const periodSummary = summarizePlanPeriods(planItems);
-  const manualTaskCount = plan.manualCount || 0;
   const totalCount = allItems.length;
 
   return `
@@ -1818,30 +1884,11 @@ function renderPlanTimelineSidebar(plan, resident, isOpen = false, tasks = [], s
       <div class="director-plan-sidebar__panel">
         <div class="director-plan-sidebar__head">
           <div>
-            <p>${plan.elder.room}室 · ${plan.elder.name}</p>
-            <strong>全天护理时间轴</strong>
-            <small>${plan.level} · ${totalCount}项任务</small>
+            <p>${resident.room}室 · ${resident.elderName}</p>
+            <strong>今日任务时间轴</strong>
+            <small>${resident.level} · ${totalCount}项任务</small>
           </div>
         </div>
-
-        ${plan.note ? `<div class="director-plan-note director-plan-note--sidebar">${plan.note}</div>` : ""}
-
-        <div class="director-plan-quick-stats director-plan-quick-stats--sidebar">
-          <span class="director-plan-quick-stat">${plan.enabledCount}项已启用</span>
-          <span class="director-plan-quick-stat ${manualTaskCount ? "is-warning" : ""}">
-            ${manualTaskCount ? `${manualTaskCount}项需手动发布` : "无手动发布"}
-          </span>
-        </div>
-
-        ${
-          periodSummary.length
-            ? `
-              <div class="director-task-pill-row director-task-pill-row--glance">
-                ${periodSummary.map((item) => `<span class="director-task-pill">${item.label} ${item.count}项</span>`).join("")}
-              </div>
-            `
-            : ""
-        }
 
         <section class="director-plan-sidebar__timeline">
           <div class="director-plan-sidebar__section-head">
@@ -1849,7 +1896,7 @@ function renderPlanTimelineSidebar(plan, resident, isOpen = false, tasks = [], s
             ${renderStatusPill(`${totalCount}项任务`, "success")}
           </div>
           <div class="director-plan-timeline director-plan-timeline--sidebar">
-            ${allItems.map((item) => item._type === "task" ? renderDirectorTimelineTaskEntry(item) : renderPlanTimelineEntry(item)).join("")}
+            ${allItems.map((item) => renderDirectorTimelineTaskEntry(item)).join("")}
           </div>
         </section>
 
@@ -2097,6 +2144,74 @@ function renderLoadRow(item) {
       <div class="director-load-row__count">
         <strong>${actionableCount}</strong>
         <small>${actionableCount >= 5 ? "偏满" : "可分配"}</small>
+      </div>
+    </article>
+  `;
+}
+
+function renderLoadChartRow(item, maxAssignedCount) {
+  const assignedCount = Number(item.assignedCount || 0);
+  const pendingCount = Number(item.pendingCount || 0);
+  const riskCount = Number(item.riskCount || 0);
+  const completedCount = Math.max(0, assignedCount - pendingCount - riskCount);
+  const percent = maxAssignedCount ? Math.max(8, Math.round((assignedCount / maxAssignedCount) * 100)) : 0;
+  const pendingPercent = assignedCount ? Math.round((pendingCount / assignedCount) * 100) : 0;
+  const riskPercent = assignedCount ? Math.round((riskCount / assignedCount) * 100) : 0;
+  const completedPercent = Math.max(0, 100 - pendingPercent - riskPercent);
+  const tone = riskCount ? "danger" : assignedCount >= 5 ? "warning" : assignedCount ? "steady" : "quiet";
+
+  return `
+    <article class="director-load-chart-row director-load-chart-row--${tone}">
+      <div class="director-load-chart-row__label">
+        <strong>${item.name}</strong>
+        <small>${item.floor}F · ${assignedCount ? `${assignedCount} 项任务` : "暂无任务"}</small>
+      </div>
+      <div class="director-load-chart-row__track" aria-label="${item.name} 护工负载 ${assignedCount} 项">
+        <div class="director-load-chart-row__bar" style="width:${percent}%">
+          ${completedPercent ? `<span class="is-completed" style="width:${completedPercent}%"></span>` : ""}
+          ${pendingPercent ? `<span class="is-pending" style="width:${pendingPercent}%"></span>` : ""}
+          ${riskPercent ? `<span class="is-risk" style="width:${riskPercent}%"></span>` : ""}
+        </div>
+      </div>
+      <div class="director-load-chart-row__count">
+        <strong>${assignedCount}</strong>
+        <small>${riskCount ? `异常 ${riskCount}` : pendingCount ? `待办 ${pendingCount}` : assignedCount ? "稳定" : "空闲"}</small>
+      </div>
+    </article>
+  `;
+}
+
+function renderCaregiverLoadChart(loads = []) {
+  const maxAssignedCount = Math.max(1, ...loads.map((item) => Number(item.assignedCount || 0)));
+  const totalAssigned = loads.reduce((sum, item) => sum + Number(item.assignedCount || 0), 0);
+  const totalPending = loads.reduce((sum, item) => sum + Number(item.pendingCount || 0), 0);
+  const totalRisk = loads.reduce((sum, item) => sum + Number(item.riskCount || 0), 0);
+
+  return `
+    <article class="director-panel director-panel--load-chart">
+      <div class="director-panel__head director-panel__head--compact">
+        <div>
+          <strong>护工负载</strong>
+          <small>按当前业务日期统计每位护工任务量。</small>
+        </div>
+        ${renderStatusPill(`${totalAssigned}项`, totalRisk ? "error" : totalPending ? "warning" : "success")}
+      </div>
+      <div class="director-load-chart-summary">
+        <span><strong>${loads.length}</strong><small>护工</small></span>
+        <span><strong>${totalPending}</strong><small>待办</small></span>
+        <span class="${totalRisk ? "is-danger" : ""}"><strong>${totalRisk}</strong><small>异常</small></span>
+      </div>
+      <div class="director-load-chart-legend">
+        <span><i class="is-completed"></i>已处理</span>
+        <span><i class="is-pending"></i>待办</span>
+        <span><i class="is-risk"></i>异常</span>
+      </div>
+      <div class="director-load-chart">
+        ${
+          loads.length
+            ? loads.map((item) => renderLoadChartRow(item, maxAssignedCount)).join("")
+            : '<div class="empty-state empty-state--soft">当前养老院还没有可统计的护工。</div>'
+        }
       </div>
     </article>
   `;
@@ -2464,6 +2579,10 @@ function renderReportTemplateSectionEditor(section = {}, sectionIndex = 0, trans
 function renderReportTemplateA4Preview(draft = {}) {
   const days = Array.from({ length: 31 }, (_, index) => index + 1);
   const sections = draft.sections || [];
+  const renderPreviewPeriodCells = (item = {}) =>
+    getReportTemplateItemPeriods(item, days.length)
+      .map((period) => `<td colspan="${period.span}" class="${period.span > 1 ? "is-merged-period" : ""}"></td>`)
+      .join("");
 
   return `
     <article class="director-report-template-preview">
@@ -2503,13 +2622,13 @@ function renderReportTemplateA4Preview(draft = {}) {
                             <small>
                               ${[
                                 item.timeWindow || "",
-                                item.frequencyDays === 1 || !item.frequencyDays ? "" : `每${item.frequencyDays}天`,
+                                getReportTemplateItemFrequencyDays(item) === 1 ? "" : `每${getReportTemplateItemFrequencyDays(item)}天`,
                               ]
                                 .filter(Boolean)
                                 .join(" · ")}
                             </small>
                           </td>
-                          ${days.map(() => "<td></td>").join("")}
+                          ${renderPreviewPeriodCells(item)}
                         </tr>
                       `,
                     )
@@ -2571,7 +2690,7 @@ function renderReportTemplateImportDialog(importState = {}) {
       <div class="director-report-template-import__dialog">
         <div class="director-card__head director-card__head--compact">
           <div>
-            <strong>导入云端模板</strong>
+            <strong>选择基础模板</strong>
           </div>
           <button class="button button--small button--secondary" type="button" data-action="refresh-report-template-import">
             ${importState.loading ? "读取中" : "刷新"}
@@ -2629,7 +2748,7 @@ function renderReportTemplateImportDialog(importState = {}) {
             data-value="${selectedTemplate?.id || ""}"
             ${selectedTemplate ? "" : "disabled"}
           >
-            导入模板
+            创建实例
           </button>
         </div>
       </div>
@@ -2637,8 +2756,51 @@ function renderReportTemplateImportDialog(importState = {}) {
   `;
 }
 
-function renderReportTemplateEditor(draft, importState = {}, scheduleSectionId = "", transient = {}, careLevelOptions = [], savedTemplates = []) {
+function renderReportTemplateHierarchy(savedTemplates = [], templateHierarchy = [], editingId = "") {
+  if (!savedTemplates.length) return "";
+  const groups = templateHierarchy?.length
+    ? templateHierarchy
+    : [
+        {
+          id: "",
+          title: "未关联基础模板",
+          templates: savedTemplates,
+        },
+      ];
+
+  return `
+    <div class="director-report-template-saved-list">
+      <div class="director-report-template-saved-list__title">云端实例模板层级</div>
+      ${groups
+        .map(
+          (group) => `
+            <section class="director-report-template-tree">
+              <div class="director-report-template-tree__base">
+                <strong>${group.title || "未命名基础模板"}</strong>
+                <small>${group.id ? `基础模板 ID：${group.id}` : "没有父基础模板记录"}</small>
+              </div>
+              ${(group.templates || [])
+                .map(
+                  (tpl) => `
+                    <button class="director-report-template-saved-item director-report-template-tree__instance ${editingId === tpl.id ? "is-editing" : ""}" type="button" data-action="edit-saved-report-template" data-value="${tpl.id}">
+                      <span>${tpl.title || "未命名实例模板"}</span>
+                      <small>${editingId === tpl.id ? "正在编辑 · " : "编辑此实例 · "}版本 ${tpl.version || 1}${tpl.baseTemplateId ? ` · 父模板 ${group.title || tpl.baseTemplateId}` : ""}</small>
+                    </button>
+                  `,
+                )
+                .join("")}
+            </section>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function renderReportTemplateEditor(draft, importState = {}, scheduleSectionId = "", transient = {}, careLevelOptions = [], savedTemplates = [], templateHierarchy = [], editingId = "") {
   if (!draft) return "";
+  const editingTemplate = editingId ? savedTemplates.find((tpl) => tpl.id === editingId) : null;
+  const isEditingExisting = Boolean(editingTemplate);
   const reportTemplateCareLevelOptions = [
     { value: "all", label: "全部护理等级" },
     ...(careLevelOptions || []).map((item) => ({ value: item, label: item })),
@@ -2647,6 +2809,11 @@ function renderReportTemplateEditor(draft, importState = {}, scheduleSectionId =
   const importedTemplate = importState.selectedTemplateId
     ? (importState.templates || []).find((t) => t.id === importState.selectedTemplateId)
     : null;
+  const baseTemplateId = draft.baseTemplateId || "";
+  const baseTemplateGroup = baseTemplateId ? (templateHierarchy || []).find((group) => group.id === baseTemplateId) : null;
+  const baseTemplateName = importedTemplate?.id === baseTemplateId
+    ? importedTemplate.title || importedTemplate.id
+    : baseTemplateGroup?.title || baseTemplateId;
 
   return `
     <section class="director-report-template-modal">
@@ -2655,15 +2822,19 @@ function renderReportTemplateEditor(draft, importState = {}, scheduleSectionId =
         <form class="director-report-template-form" data-daily-report-template-form>
           <div class="director-card__head director-card__head--compact">
             <div>
-              <strong>编辑日报模板</strong>
+              <strong>${isEditingExisting ? "编辑实例模板" : "新建实例模板"}</strong>
+              <p>${isEditingExisting ? `正在编辑：${editingTemplate.title || editingTemplate.id}` : "当前未选中任何已有实例，保存会创建新模板"}</p>
             </div>
             <div class="director-report-template-head-tools">
-              <button class="button button--small button--secondary" type="button" data-action="open-report-template-import">导入模板</button>
+              <button class="button button--small button--secondary" type="button" data-action="new-report-template-instance">新建实例</button>
               ${renderStatusPill(`版本 ${draft.version || 1}`, "success")}
             </div>
           </div>
 
-          ${importedTemplate ? `<div class="director-report-template-import-info">当前导入模板：${importedTemplate.title || importedTemplate.id}</div>` : ""}
+          <div class="director-report-template-import-info">
+            ${isEditingExisting ? `当前模式：编辑已有实例 · ${editingTemplate.title || editingId}` : `当前模式：新建实例 · ${baseTemplateName ? `父模板 ${baseTemplateName}` : "请点击“新建实例”选择基础模板"}`}
+            ${importedTemplate ? `<br/>当前导入模板：${importedTemplate.title || importedTemplate.id}` : ""}
+          </div>
 
           <div class="director-form-grid">
             <label class="director-field">
@@ -2693,12 +2864,7 @@ function renderReportTemplateEditor(draft, importState = {}, scheduleSectionId =
             <button class="button button--primary" type="button" data-action="save-report-template-editor">保存模板</button>
           </div>
 
-          ${savedTemplates.length ? `
-            <div class="director-report-template-saved-list">
-              <div class="director-report-template-saved-list__title">已保存的命名模板</div>
-              ${savedTemplates.map((tpl) => `<div class="director-report-template-saved-item" data-action="edit-saved-report-template" data-value="${tpl.id}">${tpl.title} <small>${tpl.careLevel || "全部"} · 版本 ${tpl.version || 1}</small></div>`).join("")}
-            </div>
-          ` : ""}
+          ${renderReportTemplateHierarchy(savedTemplates, templateHierarchy, editingId)}
         </form>
       </div>
       ${renderReportTemplateImportDialog(importState)}
@@ -2795,6 +2961,96 @@ function renderMonthlyCareSheet(elderName, elderInfo, dayReportsMap, template, t
                     )
                     .join(""),
                 )
+                .join("")}
+              <tr>
+                <th class="monthly-group-col">备注</th>
+                <td class="monthly-item-col">备注</td>
+                ${days.map(() => '<td class="monthly-day-col"></td>').join("")}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </article>
+  `;
+}
+
+function renderMonthlyCareSheetFromTasks(sheet, index, monthLabel) {
+  const elder = sheet.elder || {};
+  const days = Array.from({ length: index.daysInMonth }, (_, i) => i + 1);
+  const caregiver = getResponsibleCaregiverForElder(elder, { tasks: index.tasks, caregivers: index.caregivers || [] });
+  const templateSections = sheet.template?.sections || [];
+
+  const getTaskForItemDay = (item, day) => {
+    const date = getCalendarDateKey(index.year, index.month, day);
+    return getTemplateItemKeys(item)
+      .map((key) => sheet.tasksByDateAndItem.get(`${date}|${key}`))
+      .find(Boolean);
+  };
+
+  const renderTaskPeriodCell = (item, period) => {
+    const periodTasks = period.days
+      .map((day) => {
+        const date = getCalendarDateKey(index.year, index.month, day);
+        const task = getTaskForItemDay(item, day);
+        return task ? { task, date } : null;
+      })
+      .filter(Boolean);
+    const completed = periodTasks.some(({ task }) => isReportTaskCompleted(task));
+    const hasNotDueTask = period.days.some((day) => {
+      const date = getCalendarDateKey(index.year, index.month, day);
+      const task = getTaskForItemDay(item, day);
+      if (task) return isReportTaskNotDue(task, date, index.today, index.nowMinutes);
+      return !index.today || date >= index.today;
+    });
+    const mark = completed ? "✓" : hasNotDueTask ? "" : "×";
+    return `<td class="monthly-day-col ${period.span > 1 ? "is-merged-period" : ""}" colspan="${period.span}">${mark}</td>`;
+  };
+
+  return `
+    <article class="care-record-sheet care-record-sheet--monthly" data-care-record-sheet>
+      <header class="care-record-sheet__header">
+        <p>${renderCareRecordSheetField(index.institutionName)} 护理记录</p>
+        <div class="care-record-sheet__header-meta">
+          <span>老人姓名：${renderCareRecordSheetField(elder.name)}</span>
+          <span>房间号：${renderCareRecordSheetField(elder.room)}</span>
+          <span>性别：${renderCareRecordSheetField(elder.gender)}</span>
+          <span>护理级别：${renderCareRecordSheetField(elder.level)}</span>
+          <span>责任护理员：${renderCareRecordSheetField(caregiver.name)}</span>
+          <span>${monthLabel}</span>
+        </div>
+      </header>
+
+      <section class="care-record-sheet__block">
+        <div class="care-record-sheet__monthly-scroll">
+          <table class="care-record-sheet__monthly-table">
+            <thead>
+              <tr>
+                <th class="monthly-group-col">项目</th>
+                <th class="monthly-item-col">内容</th>
+                ${days.map((day) => `<th class="monthly-day-col">${day}</th>`).join("")}
+              </tr>
+            </thead>
+            <tbody>
+              ${templateSections
+                .map((section) => {
+                  const items = section.items || [];
+                  return items
+                    .map(
+                      (item, itemIndex) => `
+                        <tr>
+                          ${
+                            itemIndex === 0
+                              ? `<th class="monthly-group-col" rowspan="${Math.max(1, items.length)}">${section.title || "护理项目"}</th>`
+                              : ""
+                          }
+                          <td class="monthly-item-col">${item.label || item.title || "未命名任务"}</td>
+                          ${getReportTemplateItemPeriods(item, index.daysInMonth).map((period) => renderTaskPeriodCell(item, period)).join("")}
+                        </tr>
+                      `,
+                    )
+                    .join("");
+                })
                 .join("")}
               <tr>
                 <th class="monthly-group-col">备注</th>
@@ -3088,6 +3344,8 @@ export function renderDirectorCareRecordsPage({ state, selectors }) {
         selectors.directorReportTemplateTransient,
         selectors.careLevelOptions,
         Object.values(state.dailyReportTemplates || {}),
+        selectors.dailyReportTemplateHierarchy,
+        selectors.directorReportTemplateEditingId,
       )}
       ${renderReportTemplatePreviewOverlay(
         selectors.directorReportTemplateDraft,
@@ -3424,7 +3682,9 @@ export function renderDirectorCareRecordsPage({ state, selectors }) {
         selectors.directorReportTemplateScheduleSectionId,
         selectors.directorReportTemplateTransient,
         selectors.careLevelOptions,
-        selectors.dailyReportTemplateOptions,
+        Object.values(state.dailyReportTemplates || {}),
+        selectors.dailyReportTemplateHierarchy,
+        selectors.directorReportTemplateEditingId,
       )}
       ${renderReportTemplatePreviewOverlay(
         selectors.directorReportTemplateDraft,
@@ -3466,7 +3726,6 @@ export function renderDirectorHomePage({ state, selectors }) {
             <div>
               <p>今日进度</p>
               <div class="director-command-title-row director-command-title-row--overview">
-                ${renderDirectorLiveClock(overview.nowLabel)}
                 <h2>任务总览</h2>
                 <button type="button" class="director-inline-stat-button" data-action="navigate" data-route="director-statistics">
                   ${renderIcon("chart")}
@@ -3508,7 +3767,6 @@ export function renderDirectorHomePage({ state, selectors }) {
           ${[
             { route: "director-anomaly", icon: "warning", title: "异常", meta: anomalyMeta, tone: "error" },
             { route: "director-inventory", icon: "package", title: "库存", meta: inventoryMeta, tone: "primary" },
-            { route: "director-care-records", icon: "calendar", title: "日报收件箱", meta: "云端 / A4", tone: "success" },
           ]
             .map((item) => renderSupportShortcut(item.route, item.icon, item.title, item.meta, item.tone))
             .join("")}
@@ -3612,23 +3870,19 @@ export function renderDirectorCarePlansPage({ state, selectors }) {
   const selectedPlan = selectors.selectedDirectorPlan;
   const isTimelineOpen = Boolean(state.ui.directorPlanTimelineOpen && selectedResident && !selectors.directorPlanDraft);
   const isTimelineSettled = Boolean(isTimelineOpen && state.ui.directorPlanTimelineSettled);
-  const planSearchAction =
-    selectors.directorPlanDraft
-      ? ""
-      : `
-        <label class="director-header-search director-header-search--plan ${state.ui.directorResidentSearch ? "has-value" : ""}">
-          ${renderIcon("search")}
-          <input type="text" value="${state.ui.directorResidentSearch || ""}" placeholder="" aria-label="搜索房间号或姓名" data-director-resident-search />
-        </label>
-      `;
-  const planTemplateAction = selectors.directorPlanDraft
+  const planHeaderPrimaryActions = selectors.directorPlanDraft
     ? ""
     : `
-      <button type="button" class="director-header-action-button" data-action="open-director-temporary-task">
-        发布临时任务
-      </button>
+      <div class="director-plan-header-actions">
+        <button type="button" class="director-header-action-button" data-action="open-director-temporary-task">
+          发布临时任务
+        </button>
+        <button type="button" class="director-header-action-button director-header-action-button--soft" data-action="navigate" data-route="director-care-records">
+          日报收件箱
+        </button>
+      </div>
     `;
-  const planHeaderActions = `${planTemplateAction}${planSearchAction}`;
+  const planHeaderActions = planHeaderPrimaryActions;
   const floorSummary = selectedFloor
     ? `${selectedFloor.elderCount}位老人 · ${selectedFloor.enabledCount}项已启用`
     : "先选择楼层，再查看对应老人的护理方案。";
@@ -3685,22 +3939,22 @@ export function renderDirectorCarePlansPage({ state, selectors }) {
                         .join("")}
                     </div>
 
-                    ${renderFloorStaffDetail(selectedFloor, selectors.directorPlanFloorStaff)}
-
                     ${
                       isTimelineOpen
                         ? ""
                         : `
-                          <article class="director-panel director-panel--resident-picker">
+                          ${renderFloorStaffDetail(selectedFloor, selectors.directorPlanFloorStaff, selectors.unassignedPlanFloorResidents)}
+
+                          <article class="director-panel director-panel--resident-picker director-panel--resident-picker-large">
                             <div class="director-panel__head director-panel__head--compact">
                               <div>
                                 <strong>${selectedFloor ? `${selectedFloor.floor}F 切换老人` : "切换老人"}</strong>
-                                <small>${selectedResident ? `点击卡片展开左侧时间轴 · 当前：${selectedResident.room}室 · ${selectedResident.elderName}` : "先选一位老人"}</small>
+                                <small>${selectedResident ? `当前：${selectedResident.room}室 · ${selectedResident.elderName}` : "先选一位老人"}</small>
                               </div>
                               ${renderStatusPill(`${selectors.directorPlanRooms.length}位`, "success")}
                             </div>
 
-                            <div class="director-plan-resident-strip">
+                            <div class="director-plan-resident-strip director-plan-resident-strip--large">
                               ${
                                 selectors.directorPlanRooms.length
                                   ? selectors.directorPlanRooms.map(renderResidentRow).join("")
@@ -3708,10 +3962,10 @@ export function renderDirectorCarePlansPage({ state, selectors }) {
                               }
                             </div>
                           </article>
+
+                          ${renderCaregiverLoadChart(selectors.caregiverLoads)}
                         `
                     }
-
-                    ${renderSelectedPlan(selectedPlan, selectedResident, isTimelineOpen)}
                   `
               }
             </div>
@@ -3835,23 +4089,20 @@ function renderPersonnelDraftDialog(draft, selectors, state) {
       : state.caregivers.find((item) => item.id === draft.id)
     : null;
   const floorOptions = [1, 2, 3, 4, 5].map((floor) => ({ value: floor, label: `${floor}F` }));
-  const statusOptions = [
-    { value: "off-duty", label: "未打卡" },
-    { value: "on-duty", label: "已到岗" },
-  ];
+  const shiftOptions = (state.attendance?.shiftTemplates || [
+    { id: "morning", name: "早班", start: "07:00", end: "15:00" },
+    { id: "afternoon", name: "午班", start: "15:00", end: "23:00" },
+    { id: "night", name: "晚班", start: "23:00", end: "07:00" },
+  ]).map((shift) => ({ value: shift.id, label: `${shift.name} ${shift.start}-${shift.end}` }));
   const genderOptions = [
     { value: "女", label: "女" },
     { value: "男", label: "男" },
   ];
   const reportTemplateOptions = [...(selectors.dailyReportTemplateOptions || [])];
-  if (isElder && current?.reportTemplateId && !reportTemplateOptions.some((option) => option.value === current.reportTemplateId)) {
-    reportTemplateOptions.unshift({
-      value: current.reportTemplateId,
-      label: current.reportTemplateTitle || current.reportTemplateId,
-    });
-  }
   const selectedReportTemplateId =
-    current?.reportTemplateId || selectors.dailyReportTemplate?.id || reportTemplateOptions[0]?.value || "daily-report-basic";
+    reportTemplateOptions.some((option) => option.value === current?.reportTemplateId)
+      ? current.reportTemplateId
+      : selectors.dailyReportTemplate?.id || reportTemplateOptions[0]?.value || "daily-report-basic";
 
   return `
     <div class="director-dialog-backdrop" data-action="close-personnel-draft"></div>
@@ -3950,9 +4201,9 @@ function renderPersonnelDraftDialog(draft, selectors, state) {
                   <input name="shift" type="text" value="${current?.shift || "07:00 - 15:30"}" />
                 </label>
                 <label class="director-field">
-                  <span>状态</span>
-                  <select name="status" class="director-select">
-                    ${renderSelectOptions(statusOptions, current?.status || "off-duty")}
+                  <span>默认排班</span>
+                  <select name="defaultShiftId" class="director-select">
+                    ${renderSelectOptions(shiftOptions, current?.defaultShiftId || current?.shiftIds?.[0] || "morning")}
                   </select>
                 </label>
                 <label class="director-field">
@@ -3961,7 +4212,7 @@ function renderPersonnelDraftDialog(draft, selectors, state) {
                 </label>
                 <label class="director-field">
                   <span>登录密码</span>
-                  <input name="password" type="password" placeholder="${isEdit ? "留空则不修改" : "至少8位"}" value="" />
+                  <input name="password" type="text" placeholder="${isEdit ? "云端暂无密码记录，留空则不修改" : "至少8位"}" value="${current?.passwordHint || ""}" />
                 </label>
               `
           }
@@ -4062,6 +4313,10 @@ function renderPersonnelMenu(type, id, selectors) {
 }
 
 function renderCaregiverPersonnelRow(caregiver, load) {
+  const schedules = Array.isArray(load?.shiftSchedules) ? load.shiftSchedules : [];
+  const shiftSummary = schedules.length
+    ? schedules.map((item) => `${item.shiftName} ${item.start}-${item.end} · ${item.clockInAt ? `${item.late ? "迟到" : "已打卡"} ${item.clockInAt}` : "缺勤"}`).join(" / ")
+    : "今日未排班";
   return `
     <article class="director-people-row director-people-row--collapsible" data-action="toggle-personnel-card" data-value="caregiver:${caregiver.id}">
       <div class="director-people-row__top">
@@ -4078,7 +4333,7 @@ function renderCaregiverPersonnelRow(caregiver, load) {
       <div class="director-people-row__details">
         <div class="director-people-row__meta">
           <span>${caregiver.floor}F</span>
-          <span>${caregiver.status === "on-duty" ? "已到岗" : "未打卡"}</span>
+          <span>${shiftSummary}</span>
           <span>待办 ${load?.pendingCount || 0}</span>
         </div>
       </div>
@@ -4104,7 +4359,7 @@ function renderElderPersonnelRow(elder, plan, selectors) {
         <div class="director-people-row__meta">
           <span>${elder.floor}F</span>
           <span>${elder.age}岁</span>
-          <span>${plan ? `${plan.enabledCount}项任务` : "未建方案"}</span>
+          <span>${elder.reportTemplateTitle ? `日报模板：${elder.reportTemplateTitle}` : "未分配日报模板"}</span>
         </div>
       </div>
     </article>
@@ -4183,28 +4438,67 @@ function renderSelectedElderFloorList(elders, selectors, selectedFloor) {
 function renderCaregiverAttendancePanel(attendance) {
   const expected = attendance?.expected || 0;
   const checkedIn = attendance?.checkedIn || 0;
+  const late = attendance?.late || 0;
   const missing = attendance?.missing || 0;
-  const rate = expected ? `${Math.round((checkedIn / expected) * 100)}%` : "0%";
+  const rate = attendance?.rate || (expected ? `${Math.round((checkedIn / expected) * 100)}%` : "0%");
+  const settingsOpen = Boolean(attendance?.settingsOpen);
 
   return `
+    <div class="director-attendance-shifts" aria-label="选择班次">
+      ${[{ id: "all", name: "全部班次" }, ...(attendance?.shiftTemplates || [])]
+        .map((shift) => `
+          <button
+            type="button"
+            class="${(attendance?.shiftId || "all") === shift.id ? "is-active" : ""}"
+            data-action="set-director-attendance-shift"
+            data-value="${shift.id}"
+          >${shift.name}${shift.start ? `<small>${shift.start}-${shift.end}</small>` : ""}</button>
+        `)
+        .join("")}
+    </div>
+    <div class="director-shift-settings ${settingsOpen ? "is-open" : ""}">
+      <button
+        type="button"
+        class="director-shift-settings__toggle"
+        data-action="toggle-attendance-shift-settings"
+        aria-expanded="${settingsOpen ? "true" : "false"}"
+      >
+        <span>班次设置</span>
+        <small>设置早班、午班、晚班上班时间</small>
+      </button>
+      ${settingsOpen ? `
+        <div class="director-shift-editor" aria-label="班次时间设置">
+          ${(attendance?.shiftTemplates || []).map((shift) => `
+            <label>
+              <span>${shift.name}</span>
+              <input type="time" value="${shift.start}" data-attendance-shift-time data-shift-id="${shift.id}" data-field="start" />
+              <em>-</em>
+              <input type="time" value="${shift.end}" data-attendance-shift-time data-shift-id="${shift.id}" data-field="end" />
+            </label>
+          `).join("")}
+          <small>规则：超过上班时间 30 分钟打卡算迟到；未打卡算缺勤。</small>
+        </div>
+      ` : ""}
+    </div>
     <div class="director-attendance-strip" aria-label="今日护工考勤">
       <div>
-        <span>应到</span>
+        <span>应出勤</span>
         <strong>${expected}</strong>
       </div>
       <div>
-        <span>已到</span>
+        <span>已打卡</span>
         <strong>${checkedIn}</strong>
       </div>
+      <div class="${late ? "is-warning" : "is-success"}">
+        <span>迟到</span>
+        <strong>${late}</strong>
+      </div>
       <div class="${missing ? "is-warning" : "is-success"}">
-        <span>未到</span>
+        <span>缺勤</span>
         <strong>${missing}</strong>
       </div>
-      <div>
-        <span>出勤率</span>
-        <strong>${rate}</strong>
-      </div>
     </div>
+    <div class="director-attendance-rate">出勤率 ${rate}</div>
   `;
 }
 
@@ -4247,11 +4541,14 @@ export function renderDirectorPeoplePage({ state, selectors }) {
                 ${renderSelectedElderFloorList(sortedElders, selectors, selectedPersonnelFloor)}
               `
               : `
-                ${renderCaregiverAttendancePanel(state.director.attendance)}
+                ${renderCaregiverAttendancePanel(selectors.directorAttendance)}
                 <div class="director-people-list">
                   ${sortedCaregivers
                     .map((caregiver) => {
                       const load = selectors.caregiverLoads.find((item) => item.id === caregiver.id);
+                      if (load && selectors.directorAttendance?.schedules) {
+                        load.shiftSchedules = selectors.directorAttendance.schedules.filter((item) => item.caregiverId === caregiver.id);
+                      }
                       return renderCaregiverPersonnelRow(caregiver, load);
                     })
                     .join("")}
@@ -4267,10 +4564,11 @@ export function renderDirectorPeoplePage({ state, selectors }) {
 }
 
 export function renderDirectorProfilePage({ state }) {
-  const directorName = state.director.reviewerName || state.director.name || "院长";
-  const directorRole = state.director.role || "院长";
-  const accountId = state.director.accountId || "director-001";
-  const directorPhone = state.director.phone || "未设置";
+  const sessionUser = state.session?.user || {};
+  const directorName = sessionUser.displayName || sessionUser.display_name || state.director.reviewerName || state.director.name || "院长";
+  const directorRole = sessionUser.role === "director" ? "院长" : state.director.role || "院长";
+  const accountId = sessionUser.username || state.director.accountId || "director-001";
+  const directorPhone = sessionUser.phone || sessionUser.mobile || state.director.phone || "未设置";
   const institution = state.institution || {};
   const loginStatus = state.session.loggedIn ? "已登录" : "未登录";
 
@@ -4335,107 +4633,305 @@ export function renderDirectorProfilePage({ state }) {
   `;
 }
 
-export function renderDirectorInventoryPage({ state }) {
+function renderInventoryItemDraft(draft) {
+  if (!draft) return "";
+  return `
+    <section class="inventory-editor-modal" role="dialog" aria-modal="true">
+      <button class="inventory-editor-modal__backdrop" data-action="close-inventory-item-draft" aria-label="关闭库存编辑"></button>
+      <div class="inventory-editor-modal__dialog">
+        <div class="inventory-editor-modal__topbar">
+          <strong>${draft.id ? "编辑库存" : "新增库存"}</strong>
+          <button class="icon-button" data-action="close-inventory-item-draft">${renderIcon("close")}</button>
+        </div>
+        <form class="inventory-form" data-inventory-item-form>
+          <div class="inventory-form__grid">
+            <label class="inventory-field inventory-field--full">名称<input name="name" value="${draft.name || ""}" placeholder="如 成人护理垫" /></label>
+            <label class="inventory-field">分类<input name="category" value="${draft.category || "护理用品"}" /></label>
+            <label class="inventory-field">单位<input name="unit" value="${draft.unit || "件"}" /></label>
+            <label class="inventory-field">当前数量<input name="quantity" type="number" min="0" value="${draft.quantity || 0}" /></label>
+            <label class="inventory-field">预警线<input name="warningQuantity" type="number" min="0" value="${draft.warningQuantity || 0}" /></label>
+            <label class="inventory-field inventory-field--full">存放位置<input name="location" value="${draft.location || ""}" placeholder="如 2F护理站" /></label>
+          </div>
+          <div class="inventory-form__actions">
+            <button type="button" class="button button--secondary" data-action="close-inventory-item-draft">取消</button>
+            <button type="button" class="button button--primary" data-action="save-inventory-item">保存到云端</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  `;
+}
+
+function renderInventoryStockAdjustDraft(draft) {
+  if (!draft) return "";
+  const mode = draft.mode === "decrease" ? "decrease" : "increase";
+  const modeText = mode === "decrease" ? "减少" : "增加";
+  const initialAmount = Number(draft.amount || 0);
+  const nextQuantity = Math.max(0, Number(draft.currentQuantity || 0) + (mode === "decrease" ? -initialAmount : initialAmount));
+  return `
+    <section class="inventory-editor-modal" role="dialog" aria-modal="true">
+      <button type="button" class="inventory-editor-modal__backdrop" data-action="close-inventory-stock-adjust" aria-label="关闭库存调整"></button>
+      <div class="inventory-editor-modal__dialog">
+        <div class="inventory-editor-modal__topbar">
+          <strong>调整库存</strong>
+          <button type="button" class="icon-button" data-action="close-inventory-stock-adjust">${renderIcon("close")}</button>
+        </div>
+        <form class="inventory-form" data-inventory-stock-adjust-form>
+          <div class="inventory-action-sheet">
+            <p>${draft.name || "未命名物资"} · 当前库存 ${draft.currentQuantity || 0}${draft.unit || "件"}</p>
+            <input type="hidden" name="mode" value="${mode}" />
+            <div class="inventory-adjust-mode" role="group" aria-label="选择库存调整方向">
+              <button type="button" class="inventory-adjust-mode__button ${mode === "increase" ? "is-active" : ""}" data-action="set-inventory-stock-adjust-mode" data-value="increase">增加</button>
+              <button type="button" class="inventory-adjust-mode__button ${mode === "decrease" ? "is-active" : ""}" data-action="set-inventory-stock-adjust-mode" data-value="decrease">减少</button>
+            </div>
+            <label class="inventory-field inventory-field--full">
+              ${modeText}数量
+              <input name="amount" type="number" min="1" inputmode="numeric" value="${draft.amount || ""}" placeholder="输入数量" />
+            </label>
+            <p>调整后剩余物资会变为 <strong data-inventory-adjust-preview>${nextQuantity}${draft.unit || "件"}</strong></p>
+          </div>
+          <div class="inventory-form__actions">
+            <button type="button" class="button button--secondary" data-action="close-inventory-stock-adjust">取消</button>
+            <button type="button" class="button button--primary" data-action="save-inventory-stock-adjust">保存调整</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  `;
+}
+
+function getInventoryUsageDate(value = "") {
+  const raw = String(value || "");
+  return raw.slice(0, 10) || "未记录日期";
+}
+
+function renderInventoryUsageSparkline(dailyRows, unit = "件") {
+  if (!dailyRows.length) {
+    return '<div class="inventory-usage-chart inventory-usage-chart--empty">暂无消耗趋势</div>';
+  }
+  const width = 320;
+  const height = 120;
+  const padding = 18;
+  const maxValue = Math.max(1, ...dailyRows.map((row) => row.quantity));
+  const points = dailyRows.map((row, index) => {
+    const x = dailyRows.length === 1 ? width / 2 : padding + (index * (width - padding * 2)) / (dailyRows.length - 1);
+    const y = height - padding - (row.quantity / maxValue) * (height - padding * 2);
+    return { ...row, x, y };
+  });
+  const path = points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" ");
+  const area = `${path} L ${points[points.length - 1].x.toFixed(1)} ${height - padding} L ${points[0].x.toFixed(1)} ${height - padding} Z`;
+  return `
+    <div class="inventory-usage-chart">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="消耗趋势折线图">
+        <path class="inventory-usage-chart__area" d="${area}"></path>
+        <path class="inventory-usage-chart__line" d="${path}"></path>
+        ${points.map((point) => `<circle cx="${point.x.toFixed(1)}" cy="${point.y.toFixed(1)}" r="4"><title>${point.date}: ${point.quantity}${unit}</title></circle>`).join("")}
+      </svg>
+      <div class="inventory-usage-chart__labels">
+        <span>${dailyRows[0]?.date || ""}</span>
+        <strong>最高 ${maxValue}${unit}</strong>
+        <span>${dailyRows[dailyRows.length - 1]?.date || ""}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderInventoryItemActions(item, usages = []) {
+  if (!item) return "";
+  const dailyMap = new Map();
+  usages.forEach((usage) => {
+    const date = getInventoryUsageDate(usage.usedAt || usage.createdAt);
+    dailyMap.set(date, (dailyMap.get(date) || 0) + Number(usage.quantity || 0));
+  });
+  const dailyRows = Array.from(dailyMap.entries())
+    .map(([date, quantity]) => ({ date, quantity }))
+    .sort((left, right) => left.date.localeCompare(right.date));
+  const recentUsages = [...usages].sort((left, right) => String(right.usedAt || "").localeCompare(String(left.usedAt || ""))).slice(0, 8);
+  const safeUsages = recentUsages.map((usage) => ({
+    quantity: Number(usage.quantity || 0),
+    unit: usage.unit || item.unit,
+    usedAt: usage.usedAt || usage.createdAt || "",
+    caregiverName: usage.caregiverName || "未记录员工",
+    note: usage.note || "",
+  }));
+  return `
+    <section class="inventory-editor-modal" role="dialog" aria-modal="true">
+      <button type="button" class="inventory-editor-modal__backdrop" data-action="close-inventory-item-actions" aria-label="关闭库存操作"></button>
+      <div class="inventory-editor-modal__dialog">
+        <div class="inventory-editor-modal__topbar">
+          <strong>${item.name}</strong>
+          <button type="button" class="icon-button" data-action="close-inventory-item-actions">${renderIcon("close")}</button>
+        </div>
+        <div class="inventory-action-sheet">
+          <p>${item.category || "未分类"} · 当前库存 ${item.quantity}${item.unit}</p>
+          <div class="inventory-item-usage-panel">
+            <div class="inventory-item-usage-panel__head">
+              <strong>消耗记录</strong>
+              <span>${dailyRows.length} 天 · ${usages.length} 条</span>
+            </div>
+            ${renderInventoryUsageSparkline(dailyRows, item.unit)}
+            <div class="inventory-item-usage-days">
+              ${
+                dailyRows.length
+                  ? dailyRows
+                      .slice(-7)
+                      .reverse()
+                      .map((row) => `<span><strong>${row.date}</strong><em>${row.quantity}${item.unit}</em></span>`)
+                      .join("")
+                  : '<span class="inventory-item-usage-days__empty">暂无按日期记录</span>'
+              }
+            </div>
+            <div class="inventory-item-usage-list">
+              ${
+                recentUsages.length
+                  ? safeUsages
+                      .map(
+                        (usage) => `
+                          <article>
+                            <strong>${usage.quantity}${usage.unit}</strong>
+                            <span>${usage.usedAt || usage.createdAt || ""}</span>
+                            <em>${usage.caregiverName || "未记录员工"}${usage.note ? ` · ${usage.note}` : ""}</em>
+                          </article>
+                        `,
+                      )
+                      .join("")
+                  : '<div class="empty-state empty-state--soft">暂无该物资消耗记录。</div>'
+              }
+            </div>
+          </div>
+          <button type="button" class="button button--primary button--block" data-action="open-inventory-stock-adjust" data-value="${item.id}">调整库存</button>
+          <button type="button" class="button button--danger button--block" data-action="delete-inventory-item" data-value="${item.id}">删除物资</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+export function renderDirectorInventoryPage({ state, selectors }) {
+  const items = selectors.inventoryItems || [];
+  const usages = selectors.inventoryUsages || [];
+  const summary = selectors.inventorySummary || { types: 0, warningCount: 0, usageCount: 0 };
+  const filters = selectors.inventoryUsageFilters || {};
   return `
     <section class="director-page">
-      ${renderDirectorHeader("物品库存管理", state.director.date)}
+      ${renderDirectorHeader(
+        "物品库存管理",
+        state.director.date,
+        `<button class="button button--small" data-action="open-inventory-item-draft">新增库存</button>`,
+      )}
 
       <div class="director-stack">
         <div class="director-grid-2">
           <article class="director-card director-card--dense">
             <p>总品类数</p>
-            <strong>${state.director.inventorySummary.types}</strong>
+            <strong>${summary.types}</strong>
           </article>
           <article class="director-card director-card--dense">
             <p>库存预警</p>
-            <strong class="is-error">${state.director.inventorySummary.warningCount}</strong>
+            <strong class="is-error">${summary.warningCount}</strong>
           </article>
         </div>
 
-        <div class="director-chip-row">
-          ${state.director.inventoryCategories.map((item, index) => `<span class="director-chip ${index === 0 ? "is-active" : ""}">${item}</span>`).join("")}
-        </div>
-
         <div class="director-record-list">
-          ${state.director.inventory
+          ${items.length
+            ? items
             .map((item) => {
-              const percent = Math.min(100, Math.round((item.stock / item.limit) * 100));
-              const tone = item.status === "鍏呰冻" ? "success" : item.status === "鍋忎綆" ? "warning" : "error";
+              const percent = item.warningQuantity ? Math.min(100, Math.round((item.quantity / item.warningQuantity) * 100)) : 100;
+              const tone = item.quantity <= item.warningQuantity ? "error" : item.quantity <= item.warningQuantity * 1.5 ? "warning" : "success";
+              const statusText = item.quantity <= item.warningQuantity ? "需补货" : "充足";
 
               return `
-                <article class="director-card director-card--dense">
+                <article class="director-card director-card--dense inventory-item-card" data-action="open-inventory-item-actions" data-value="${item.id}">
                   <div class="director-card__head director-card__head--compact">
                     <div>
                       <strong>${item.name}</strong>
-                      <p>${item.type} · ${item.spec}</p>
+                      <p>${item.category || "未分类"} · ${item.unit}</p>
                     </div>
-                    ${renderStatusPill(item.status, tone)}
+                    ${renderStatusPill(statusText, tone)}
                   </div>
                   <div class="director-card__meta">
-                    <span>位置：${item.location}</span>
-                    <span>预警线：${item.limit}</span>
+                    <span>位置：${item.location || "未填写"}</span>
+                    <span>预警线：${item.warningQuantity}${item.unit}</span>
                   </div>
                   <div class="director-progress">
                     <span class="director-progress__bar director-progress__bar--${tone}" style="width: ${percent}%"></span>
                   </div>
                   <div class="director-card__meta">
-                    <strong>当前库存 ${item.stock}</strong>
+                    <strong>当前库存 ${item.quantity}${item.unit}</strong>
+                    <span>点击名片操作</span>
                   </div>
                 </article>
               `;
             })
-            .join("")}
+            .join("")
+            : '<div class="empty-state empty-state--soft">还没有配置库存品项。</div>'}
         </div>
+
+        <article class="director-card director-card--dense">
+          <div class="director-card__head director-card__head--compact">
+            <div>
+              <strong>使用流水</strong>
+              <p>按日期和消耗品名称索引，员工提交后自动扣减库存。</p>
+            </div>
+            <div class="inventory-usage-head-actions">
+              ${renderStatusPill(`${summary.usageCount} 条`, summary.usageCount ? "success" : "muted")}
+              <button class="button button--small button--outline" data-action="refresh-cloud-inventory">刷新</button>
+            </div>
+          </div>
+          <div class="inventory-usage-filters">
+            <label class="inventory-date-filter">
+              <span>日期</span>
+              <button type="button" class="inventory-date-filter__button" data-action="open-inventory-date-picker" aria-label="选择日期">${renderIcon("calendar")}</button>
+              <input type="date" data-inventory-date-picker data-inventory-usage-filter="recordDate" value="${filters.recordDate || ""}" />
+            </label>
+            <label>消耗品<input data-inventory-usage-filter="itemName" value="${filters.itemName || ""}" placeholder="输入名称筛选" /></label>
+          </div>
+          <div class="director-record-list">
+            ${
+              usages.length
+                ? usages
+                    .slice(0, 30)
+                    .map(
+                      (usage) => `
+                        <article class="director-record-card">
+                          <div class="director-record-card__identity">
+                            <strong>${usage.itemName}</strong>
+                            <small>${usage.usedAt || usage.createdAt || ""}</small>
+                          </div>
+                          <div class="director-record-card__status">
+                            <strong>${usage.quantity}${usage.unit}</strong>
+                            <small>${usage.caregiverName || "未记录员工"}${usage.note ? ` · ${usage.note}` : ""}</small>
+                          </div>
+                        </article>
+                      `,
+                    )
+                    .join("")
+                : '<div class="empty-state empty-state--soft">暂无库存使用记录。</div>'
+            }
+          </div>
+        </article>
       </div>
+      ${renderInventoryItemDraft(selectors.inventoryItemDraft)}
+      ${renderInventoryStockAdjustDraft(selectors.inventoryStockAdjustDraft)}
+      ${renderInventoryItemActions(selectors.inventoryItemActions, selectors.inventoryItemActionUsages || [])}
     </section>
   `;
 }
 
 export function renderDirectorAnomalyPage({ state, selectors }) {
   const reports = selectors.directorExceptionReports || [];
-  const readReports = selectors.directorReadExceptionReports || [];
-
-  const headerActions = readReports.length
-    ? `<button class="button button--small button--outline" data-action="navigate" data-route="director-read-inbox">${renderIcon("message")} 已读信息箱 (${readReports.length})</button>`
-    : "";
+  const anomalyDate = selectors.directorAnomalyDate || state.ui.directorAuditDate || state.director.date;
 
   return `
     <section class="director-page">
-      ${renderDirectorHeader("异常状态", state.director.date, headerActions)}
+      ${renderDirectorHeader("异常状态", anomalyDate)}
 
       <div class="director-stack">
+        ${renderDirectorAnomalyDateFilter(anomalyDate)}
         ${
           reports.length
             ? reports.map(renderDirectorExceptionReportCard).join("")
             : '<div class="empty-state empty-state--soft">当前没有员工上传的异常任务报告。</div>'
-        }
-      </div>
-    </section>
-  `;
-}
-
-export function renderDirectorReadInboxPage({ state, selectors }) {
-  const readReports = selectors.directorReadExceptionReports || [];
-
-  const headerActions = '<button class="button button--small" data-action="navigate" data-route="director-anomaly">返回异常页</button>';
-
-  return `
-    <section class="director-page">
-      ${renderDirectorHeader("已读信息箱", state.director.date, headerActions)}
-
-      <div class="director-stack">
-        ${
-          readReports.length
-            ? `
-              <div class="director-read-exception-section">
-                <div class="director-read-exception-section__head">
-                  <h3>已读 (${readReports.length})</h3>
-                  <button class="button button--small button--danger" data-action="delete-all-read-exceptions">全部删除</button>
-                </div>
-                ${readReports.map(renderReadExceptionCard).join("")}
-              </div>
-            `
-            : '<div class="empty-state empty-state--soft">没有已读的异常报告。</div>'
         }
       </div>
     </section>

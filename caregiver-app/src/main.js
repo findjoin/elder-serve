@@ -1,4 +1,4 @@
-import { actions, notify, selectors, state, subscribe } from "./store/state.js";
+﻿import { actions, notify, selectors, state, subscribe } from "./store/state.js";
 import { renderAttendancePage } from "./pages/attendancePage.js";
 import {
   renderDirectorAnomalyPage,
@@ -13,9 +13,7 @@ import {
   renderDirectorInventoryPage,
   renderDirectorPeoplePage,
   renderDirectorProfilePage,
-  renderDirectorReadInboxPage,
   renderDirectorTaskDetailDialog,
-  renderSelectedPlan,
   renderDirectorStatisticsPage,
   renderDirectorTemplateLibraryPage,
 } from "./pages/directorPage.js";
@@ -25,6 +23,7 @@ import { renderFamilyHealthPage, renderFamilyHomePage, renderFamilyMessagesPage,
 import { renderHistoryDetailPage } from "./pages/historyDetailPage.js";
 import { renderHistoryPage } from "./pages/historyPage.js";
 import { renderHomePage } from "./pages/homePage.js";
+import { renderInventoryUsagePage } from "./pages/inventoryUsagePage.js";
 import { renderLoginPage } from "./pages/loginPage.js";
 import { renderProfilePage } from "./pages/profilePage.js";
 import { renderRoomSelectPage } from "./pages/roomSelectPage.js";
@@ -35,19 +34,27 @@ import { renderIcon } from "./utils/caregiverUi.js";
 const app = document.getElementById("app");
 const routeScrollPositions = new Map();
 let pendingScrollRestore = null;
+let lockedScrollRestore = null;
 let pendingAnchorRestore = null;
 let isRestoringBrowserHistory = false;
 let lastHistorySignature = "";
 let directorCloudPollTimer = 0;
 let directorCareReportsPollTimer = 0;
 let caregiverTaskPollTimer = 0;
+let caregiverRecordSyncSignature = "";
 let institutionStatePollTimer = 0;
 let liveClockTimer = 0;
+let lastUserScrollAt = 0;
+let deferredCarePlansRenderTimer = 0;
+let directorPlanReturnScrollSnapshot = null;
 let reportTemplateScheduleDrag = null;
 let skipCaregiverTimelineAutoFocus = false;
 let lastCaregiverTimelineFocusKey = "";
+let directorDatePickerHoldUntil = 0;
+let directorDatePickerRenderTimer = 0;
+let directorElderAssignmentDrag = null;
 
-const DIRECTOR_TASK_POLL_INTERVAL_MS = 10000;
+const DIRECTOR_TASK_POLL_INTERVAL_MS = 3000;
 const DIRECTOR_CARE_REPORT_POLL_INTERVAL_MS = 60000;
 
 const REPORT_TEMPLATE_SCHEDULE_START_MINUTES = 0;
@@ -56,6 +63,85 @@ const REPORT_TEMPLATE_SCHEDULE_PX_PER_MINUTE = 1;
 const REPORT_TEMPLATE_SCHEDULE_STEP_MINUTES = 15;
 const REPORT_TEMPLATE_SCHEDULE_MIN_DURATION = 15;
 const REPORT_TEMPLATE_SCHEDULE_CARD_MIN_HEIGHT = 72;
+const TASK_EVIDENCE_MAX_EDGE = 1280;
+const TASK_EVIDENCE_JPEG_QUALITY = 0.72;
+
+function getVisualViewportHeight() {
+  const height = window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 0;
+  return Math.max(320, Math.floor(height));
+}
+
+function syncVisualViewportMetrics() {
+  const viewport = window.visualViewport;
+  const height = getVisualViewportHeight();
+  const offsetTop = Math.max(0, Math.floor(viewport?.offsetTop || 0));
+  const innerHeight = window.innerHeight || height;
+  const keyboardInset = Math.max(0, Math.floor(innerHeight - height - offsetTop));
+
+  document.documentElement.style.setProperty("--visual-viewport-height", `${height}px`);
+  document.documentElement.style.setProperty("--keyboard-inset", `${keyboardInset}px`);
+}
+
+function scrollTaskRecordNoteIntoStableView(target = document.activeElement) {
+  if (!target?.matches?.("[data-task-record-note]")) return;
+
+  syncVisualViewportMetrics();
+
+  const dialog = target.closest(".task-record-modal__dialog");
+  if (!dialog) return;
+
+  const viewportHeight = getVisualViewportHeight();
+  const dialogRect = dialog.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const topLimit = Math.max(12, dialogRect.top + 12);
+  const bottomLimit = Math.min(viewportHeight - 12, dialogRect.bottom - 12);
+
+  if (targetRect.bottom > bottomLimit) {
+    dialog.scrollTop += targetRect.bottom - bottomLimit;
+  } else if (targetRect.top < topLimit) {
+    dialog.scrollTop -= topLimit - targetRect.top;
+  }
+}
+
+function stabilizeTaskRecordNoteFocus(target = document.activeElement) {
+  if (!target?.matches?.("[data-task-record-note]")) return;
+
+  window.requestAnimationFrame(() => {
+    scrollTaskRecordNoteIntoStableView(target);
+    window.requestAnimationFrame(() => scrollTaskRecordNoteIntoStableView(target));
+  });
+
+  [60, 140, 280, 460].forEach((delay) => {
+    window.setTimeout(() => scrollTaskRecordNoteIntoStableView(target), delay);
+  });
+}
+
+function holdDirectorDatePickerAutoRefresh(durationMs = 20000) {
+  directorDatePickerHoldUntil = Math.max(directorDatePickerHoldUntil, Date.now() + durationMs);
+}
+
+function releaseDirectorDatePickerAutoRefresh(delayMs = 1200) {
+  directorDatePickerHoldUntil = Math.max(directorDatePickerHoldUntil, Date.now() + delayMs);
+}
+
+function clearDirectorDatePickerAutoRefresh() {
+  directorDatePickerHoldUntil = 0;
+  window.clearTimeout(directorDatePickerRenderTimer);
+  directorDatePickerRenderTimer = 0;
+}
+
+function isDirectorDatePickerProtected() {
+  return Date.now() < directorDatePickerHoldUntil;
+}
+
+function deferRenderUntilDirectorDatePickerSettles() {
+  const delay = Math.max(80, directorDatePickerHoldUntil - Date.now() + 120);
+  window.clearTimeout(directorDatePickerRenderTimer);
+  directorDatePickerRenderTimer = window.setTimeout(() => {
+    directorDatePickerRenderTimer = 0;
+    renderApp();
+  }, delay);
+}
 
 const routes = {
   login: renderLoginPage,
@@ -68,6 +154,7 @@ const routes = {
   "task-detail": renderTaskDetailPage,
   history: renderHistoryPage,
   "history-detail": renderHistoryDetailPage,
+  "inventory-usage": renderInventoryUsagePage,
   profile: renderProfilePage,
   "family-home": renderFamilyHomePage,
   "family-health": renderFamilyHealthPage,
@@ -85,15 +172,53 @@ const routes = {
   "director-people": renderDirectorPeoplePage,
   "director-profile": renderDirectorProfilePage,
   "director-anomaly": renderDirectorAnomalyPage,
-  "director-read-inbox": renderDirectorReadInboxPage,
   "director-statistics": renderDirectorStatisticsPage,
   "director-elder-timeline": renderDirectorElderTimelinePage,
 };
 
+function getBottomNavItemsLegacy() {
+  if (state.session.identity === "caregiver") {
+    return [
+      { key: "home", route: "home", label: "鎴戠殑浠诲姟", icon: "tasks" },
+      { key: "history", route: "history", label: "鎶ょ悊璁板綍", icon: "history" },
+      { key: "profile", route: "profile", label: "涓汉涓績", icon: "profile" },
+    ];
+  }
+
+  if (state.session.identity === "family") {
+    return [
+      { key: "family-home", route: "family-home", label: "棣栭〉", icon: "home" },
+      { key: "family-health", route: "family-health", label: "鍋ュ悍", icon: "pulse" },
+      { key: "family-messages", route: "family-messages", label: "娑堟伅", icon: "message" },
+      { key: "family-profile", route: "family-profile", label: "鎴戠殑", icon: "profile" },
+    ];
+  }
+
+  if (state.session.identity === "director" || state.session.identity === "admin" || state.session.identity === "superadmin") {
+    return [
+      { key: "director-home", route: "director-home", label: "鎬昏", icon: "home" },
+      { key: "director-care-plans", route: "director-care-plans", label: "鏂规", icon: "users" },
+      { key: "director-people", route: "director-people", label: "浜哄憳", icon: "profile" },
+      { key: "director-profile", route: "director-profile", label: "鎴戠殑", icon: "profile" },
+    ];
+  }
+
+  if (false && state.session.identity === "director") {
+    return [
+      { key: "director-home", route: "director-home", label: "鎬昏", icon: "home" },
+      { key: "director-inventory", route: "director-inventory", label: "搴撳瓨", icon: "package" },
+      { key: "director-anomaly", route: "director-anomaly", label: "寮傚父", icon: "warning" },
+      { key: "director-statistics", route: "director-statistics", label: "缁熻", icon: "chart" },
+    ];
+  }
+
+  return [];
+}
+
 function getBottomNavItems() {
   if (state.session.identity === "caregiver") {
     return [
-      { key: "home", route: "home", label: "任务中心", icon: "tasks" },
+      { key: "home", route: "home", label: "我的任务", icon: "tasks" },
       { key: "history", route: "history", label: "护理记录", icon: "history" },
       { key: "profile", route: "profile", label: "个人中心", icon: "profile" },
     ];
@@ -114,15 +239,6 @@ function getBottomNavItems() {
       { key: "director-care-plans", route: "director-care-plans", label: "方案", icon: "users" },
       { key: "director-people", route: "director-people", label: "人员", icon: "profile" },
       { key: "director-profile", route: "director-profile", label: "我的", icon: "profile" },
-    ];
-  }
-
-  if (false && state.session.identity === "director") {
-    return [
-      { key: "director-home", route: "director-home", label: "总览", icon: "home" },
-      { key: "director-inventory", route: "director-inventory", label: "库存", icon: "package" },
-      { key: "director-anomaly", route: "director-anomaly", label: "异常", icon: "warning" },
-      { key: "director-statistics", route: "director-statistics", label: "统计", icon: "chart" },
     ];
   }
 
@@ -170,10 +286,10 @@ function renderBatchPanel() {
     <div class="modal-overlay ${state.ui.batchPanelOpen ? "is-active" : ""}" data-action="close-batch-panel"></div>
     <section class="batch-panel ${state.ui.batchPanelOpen ? "is-active" : ""}">
       <div class="batch-panel__header">
-        <h3>批量任务选择</h3>
+        <h3>鎵归噺浠诲姟閫夋嫨</h3>
         <button class="icon-button" data-action="close-batch-panel">${renderIcon("close")}</button>
       </div>
-      <p class="batch-panel__hint">当前固定负责 ${state.ui.selectedFloor}F，优先处理午餐助餐；批量后可补充异常/不配合。</p>
+      <p class="batch-panel__hint">褰撳墠鍥哄畾璐熻矗 ${state.ui.selectedFloor}F锛屼紭鍏堝鐞嗗崍椁愬姪椁愶紱鎵归噺鍚庡彲琛ュ厖寮傚父/涓嶉厤鍚堛€?/p>
 
       <div class="batch-panel__grid">
         ${state.batchJobs
@@ -182,14 +298,14 @@ function renderBatchPanel() {
               <button class="batch-panel__item ${job.completed ? "is-completed" : ""}" data-action="complete-batch" data-value="${job.key}">
                 <span class="batch-panel__item-icon">${renderIcon(job.icon)}</span>
                 <span>${job.title}</span>
-                <small>全层 ${job.total} 人${job.completed ? " · 已记录" : ""}</small>
+                <small>鍏ㄥ眰 ${job.total} 浜?{job.completed ? " 路 宸茶褰? : ""}</small>
               </button>
             `,
           )
           .join("")}
       </div>
 
-      <button class="button button--muted button--block" data-action="close-batch-panel">取消</button>
+      <button class="button button--muted button--block" data-action="close-batch-panel">鍙栨秷</button>
     </section>
   `;
 }
@@ -231,6 +347,75 @@ function renderDirectorTaskDetail() {
   return renderDirectorTaskDetailDialog(task, state);
 }
 
+function renderCaregiverRecordDetail() {
+  const detail = selectors().caregiverRecordDetail;
+  if (state.session.identity !== "caregiver" || !detail) return "";
+  const rows = Array.isArray(detail.rows) ? detail.rows : [];
+  const previewIndex = Number.isInteger(state.ui.caregiverRecordPhotoPreviewIndex)
+    ? state.ui.caregiverRecordPhotoPreviewIndex
+    : null;
+  const previewTaskId = state.ui.caregiverRecordPhotoPreviewTaskId || "";
+  const previewRow = previewIndex !== null
+    ? rows.find((row) => row.id === previewTaskId && Array.isArray(row.photos) && row.photos[previewIndex])
+    : null;
+  const previewPhoto = previewRow ? previewRow.photos[previewIndex] : null;
+  const previewUrl = previewPhoto?.dataUrl || previewPhoto?.url || "";
+
+  return `
+    <section class="caregiver-record-detail-modal" role="dialog" aria-modal="true">
+      <button class="caregiver-record-detail-modal__backdrop" type="button" data-action="close-caregiver-record-detail" aria-label="关闭记录"></button>
+      <article class="caregiver-record-detail-modal__dialog">
+        <header class="caregiver-record-detail-modal__head">
+          <div>
+            <strong>${escapeHtml(detail.elderName || "老人任务记录")}</strong>
+            <small>${escapeHtml(detail.recordDate || "")} · ${escapeHtml(detail.caregiverName || "")}</small>
+          </div>
+          <button class="icon-button" type="button" data-action="close-caregiver-record-detail">${renderIcon("close")}</button>
+        </header>
+        <div class="caregiver-record-detail-modal__summary">
+          <span>打卡 ${detail.checkInCount || 0}</span>
+          <span>文字 ${detail.noteCount || 0}</span>
+          <span>图片 ${detail.photoCount || 0}</span>
+        </div>
+        <div class="caregiver-record-detail-table">
+          ${
+            rows.length
+              ? rows
+                  .map(
+                    (row) => `
+                      <div class="caregiver-record-detail-row">
+                        <div>
+                          <strong>${escapeHtml(row.taskName || "任务卡")}</strong>
+                          <small>${escapeHtml(row.checkInTime || "未打卡")}</small>
+                        </div>
+                        <p>${escapeHtml(row.note || "无文字记录")}</p>
+                        <div class="caregiver-record-detail-row__media">
+                          <span>${Number(row.photoCount || 0)} 张图片</span>
+                          ${
+                            Number(row.photoCount || 0) > 0
+                              ? `<button type="button" data-action="preview-caregiver-record-photo" data-task-id="${escapeHtml(row.id || "")}" data-photo-index="0">查看图片</button>`
+                              : ""
+                          }
+                        </div>
+                      </div>
+                    `,
+                  )
+                  .join("")
+              : `<div class="empty-state empty-state--soft">该日期没有可查看的任务卡记录。</div>`
+          }
+        </div>
+      </article>
+      ${
+        previewUrl
+          ? `<button class="task-record-lightbox" type="button" data-action="close-caregiver-record-photo-preview" aria-label="返回记录">
+              <img src="${escapeHtml(previewUrl)}" alt="${escapeHtml(previewPhoto?.name || "任务图片")}" />
+            </button>`
+          : ""
+      }
+    </section>
+  `;
+}
+
 function renderTaskRecordDialog() {
   const dialog = state.ui.taskRecordDialog;
   if (state.session.identity !== "caregiver" || !dialog) return "";
@@ -252,6 +437,7 @@ function renderTaskRecordDialog() {
       ? state.ui.taskExceptionEvidence?.[evidenceKey]
       : state.ui.taskRecordEvidence?.[evidenceKey] || state.ui.taskEvidence?.[evidenceKey];
   const evidenceList = normalizeTaskEvidenceList(evidenceSource).slice(0, 6);
+  const isSaving = Boolean(dialog.saving);
   const noteSource = isQuick
     ? state.ui.quickExceptionNotes?.[evidenceKey]
     : isException
@@ -260,8 +446,8 @@ function renderTaskRecordDialog() {
   const note = dialog.note ?? noteSource ?? "";
   const title = isQuick ? "快速异常上报" : isException ? "异常记录" : "任务记录";
   const meta = isQuick
-    ? `${elder.room}室 · ${elder.name}`
-    : `${elder ? `${elder.room}室 · ${elder.name}` : ""} ${task.schedule} · ${task.title}`;
+    ? `${elder.room || ""}室 · ${elder.name || ""}`
+    : `${elder ? `${elder.room || ""}室 · ${elder.name || ""}` : ""} ${task.schedule || ""} · ${task.title || ""}`;
   const previewIndex = Number.isInteger(dialog.previewIndex) ? dialog.previewIndex : null;
   const previewEvidence = previewIndex !== null ? evidenceList[previewIndex] : null;
   const targetAttrs = `
@@ -335,8 +521,8 @@ function renderTaskRecordDialog() {
         </label>
 
         <div class="task-record-modal__actions">
-          <button class="button button--muted" type="button" data-action="close-task-record-dialog">取消</button>
-          <button class="button button--primary" type="button" data-action="save-task-record-dialog">保存</button>
+          <button class="button button--muted" type="button" data-action="close-task-record-dialog" ${isSaving ? "disabled" : ""}>取消</button>
+          <button class="button button--primary" type="button" data-action="save-task-record-dialog" ${isSaving ? "disabled" : ""}>${isSaving ? "保存中..." : "保存"}</button>
         </div>
       </article>
       ${
@@ -352,7 +538,11 @@ function renderTaskRecordDialog() {
 
 function getPrimaryScrollContainer() {
   const routeScroller = app.querySelector(".director-page--care-plans");
-  if (routeScroller && (routeScroller.scrollTop > 0 || routeScroller.scrollHeight > routeScroller.clientHeight + 4)) {
+  if (
+    routeScroller &&
+    routeScroller.scrollHeight > routeScroller.clientHeight + 4 &&
+    (routeScroller.scrollTop > 0 || !app.querySelector(".content-area"))
+  ) {
     return routeScroller;
   }
 
@@ -372,14 +562,27 @@ function getScrollSnapshot() {
     primary: getPrimaryScrollContainer()?.scrollTop || 0,
     content: app.querySelector(".content-area")?.scrollTop || 0,
     directorPlan: app.querySelector(".director-page--care-plans")?.scrollTop || 0,
+    directorPlanSidebar: app.querySelector(".director-plan-sidebar__panel")?.scrollTop || 0,
+    directorPlanResidentDrawer: app.querySelector(".director-plan-resident-drawer__panel")?.scrollTop || 0,
     directorPlanFloorStrip: app.querySelector(".director-plan-floor-strip")?.scrollLeft || 0,
     caregiverTimeline:
       app.querySelector("[data-caregiver-timeline-fullscreen-list]")?.scrollTop ||
       app.querySelector("[data-caregiver-timeline-list]")?.scrollTop ||
       0,
+    taskRecordDialog: app.querySelector(".task-record-modal__dialog")?.scrollTop || 0,
     reportTemplateDialog: app.querySelector(".director-report-template-modal__dialog")?.scrollTop || 0,
     reportTemplateSchedule: app.querySelector(".director-report-schedule-page__body")?.scrollTop || 0,
     reportTemplateSections,
+  };
+}
+
+function getDirectorTimelineScrollSnapshot() {
+  const snapshot = getScrollSnapshot();
+  const sidebarTop = app.querySelector(".director-plan-sidebar__panel")?.scrollTop || snapshot.directorPlanSidebar || 0;
+  return {
+    ...snapshot,
+    primary: sidebarTop,
+    directorPlanSidebar: sidebarTop,
   };
 }
 
@@ -389,8 +592,11 @@ function normalizeScrollSnapshot(value) {
       primary: Number(value.primary) || 0,
       content: Number(value.content) || 0,
       directorPlan: Number(value.directorPlan) || 0,
+      directorPlanSidebar: Number(value.directorPlanSidebar) || 0,
+      directorPlanResidentDrawer: Number(value.directorPlanResidentDrawer) || 0,
       directorPlanFloorStrip: Number(value.directorPlanFloorStrip) || 0,
       caregiverTimeline: Number(value.caregiverTimeline) || 0,
+      taskRecordDialog: Number(value.taskRecordDialog) || 0,
       reportTemplateDialog: Number(value.reportTemplateDialog) || 0,
       reportTemplateSchedule: Number(value.reportTemplateSchedule) || 0,
       reportTemplateSections:
@@ -405,8 +611,11 @@ function normalizeScrollSnapshot(value) {
     primary: scrollTop,
     content: scrollTop,
     directorPlan: scrollTop,
+    directorPlanSidebar: scrollTop,
+    directorPlanResidentDrawer: 0,
     directorPlanFloorStrip: 0,
     caregiverTimeline: 0,
+    taskRecordDialog: 0,
     reportTemplateDialog: 0,
     reportTemplateSchedule: 0,
     reportTemplateSections: {},
@@ -437,7 +646,14 @@ function restoreScrollPosition(route) {
 
   scroller.dataset.route = route;
   const hasPendingRestore = pendingScrollRestore?.route === route;
-  const snapshot = normalizeScrollSnapshot(hasPendingRestore ? pendingScrollRestore.scrollTop : routeScrollPositions.get(route) || 0);
+  const hasLockedRestore = lockedScrollRestore?.route === route && Date.now() < lockedScrollRestore.expiresAt;
+  const snapshot = normalizeScrollSnapshot(
+    hasPendingRestore
+      ? pendingScrollRestore.scrollTop
+      : hasLockedRestore
+        ? lockedScrollRestore.scrollTop
+        : routeScrollPositions.get(route) || 0,
+  );
   const applyScroll = () => {
     const currentPrimary = getPrimaryScrollContainer();
     if (currentPrimary) {
@@ -454,6 +670,16 @@ function restoreScrollPosition(route) {
       directorPlanScroller.scrollTop = Math.min(snapshot.directorPlan || snapshot.primary, Math.max(0, directorPlanScroller.scrollHeight - directorPlanScroller.clientHeight));
     }
 
+    const directorPlanSidebar = app.querySelector(".director-plan-sidebar__panel");
+    if (directorPlanSidebar) {
+      directorPlanSidebar.scrollTop = Math.min(snapshot.directorPlanSidebar, Math.max(0, directorPlanSidebar.scrollHeight - directorPlanSidebar.clientHeight));
+    }
+
+    const directorPlanResidentDrawer = app.querySelector(".director-plan-resident-drawer__panel");
+    if (directorPlanResidentDrawer) {
+      directorPlanResidentDrawer.scrollTop = Math.min(snapshot.directorPlanResidentDrawer, Math.max(0, directorPlanResidentDrawer.scrollHeight - directorPlanResidentDrawer.clientHeight));
+    }
+
     const directorPlanFloorStrip = app.querySelector(".director-plan-floor-strip");
     if (directorPlanFloorStrip) {
       directorPlanFloorStrip.scrollLeft = snapshot.directorPlanFloorStrip;
@@ -463,6 +689,11 @@ function restoreScrollPosition(route) {
       app.querySelector("[data-caregiver-timeline-fullscreen-list]") || app.querySelector("[data-caregiver-timeline-list]");
     if (caregiverTimeline) {
       caregiverTimeline.scrollTop = snapshot.caregiverTimeline;
+    }
+
+    const taskRecordDialog = app.querySelector(".task-record-modal__dialog");
+    if (taskRecordDialog) {
+      taskRecordDialog.scrollTop = snapshot.taskRecordDialog;
     }
 
     const reportTemplateDialog = app.querySelector(".director-report-template-modal__dialog");
@@ -495,6 +726,55 @@ function restoreScrollPosition(route) {
 function requestScrollRestore(route, scrollTop = 0) {
   pendingScrollRestore = { route, scrollTop };
   skipCaregiverTimelineAutoFocus = true;
+}
+
+function lockScrollRestore(route, scrollTop = 0, durationMs = 1600) {
+  const snapshot = normalizeScrollSnapshot(scrollTop);
+  pendingScrollRestore = { route, scrollTop: snapshot };
+  lockedScrollRestore = {
+    route,
+    scrollTop: snapshot,
+    expiresAt: Date.now() + durationMs,
+  };
+  skipCaregiverTimelineAutoFocus = true;
+}
+
+function releaseScrollRestoreLock() {
+  if (!lockedScrollRestore) return;
+  const restore = lockedScrollRestore;
+  window.setTimeout(() => {
+    if (lockedScrollRestore === restore) {
+      lockedScrollRestore = null;
+    }
+  }, 180);
+}
+
+function markUserScrollActivity() {
+  lastUserScrollAt = Date.now();
+}
+
+function isUserRecentlyScrolling(windowMs = 1400) {
+  return Date.now() - lastUserScrollAt < windowMs;
+}
+
+function isDirectorRoute(route = state.ui.route) {
+  return typeof route === "string" && route.startsWith("director-");
+}
+
+function isDirectorScrollProtected(windowMs = 1400) {
+  return isDirectorRoute() && isUserRecentlyScrolling(windowMs);
+}
+
+function isCarePlansScrollProtected(windowMs = 1400) {
+  return state.ui.route === "director-care-plans" && isUserRecentlyScrolling(windowMs);
+}
+
+function deferDirectorScrollRender() {
+  window.clearTimeout(deferredCarePlansRenderTimer);
+  deferredCarePlansRenderTimer = window.setTimeout(() => {
+    deferredCarePlansRenderTimer = 0;
+    renderApp();
+  }, 260);
 }
 
 function findActionElement(action, value) {
@@ -613,15 +893,6 @@ function syncCaregiverTimelineFocus() {
 }
 
 function renderDirectorPlanPreviewInPlace(scrollSnapshot) {
-  const currentSelectors = selectors();
-  const selectedResident = currentSelectors.selectedDirectorPlanResident;
-  const selectedPlan = currentSelectors.selectedDirectorPlan;
-  const summary = app.querySelector(".director-plan-summary--focus");
-
-  if (summary) {
-    summary.outerHTML = renderSelectedPlan(selectedPlan, selectedResident, false);
-  }
-
   app.querySelectorAll('[data-action="preview-director-plan-room"]').forEach((card) => {
     card.classList.toggle("is-active", card.dataset.value === state.ui.selectedDirectorPlanRoom);
   });
@@ -641,7 +912,7 @@ function renderDirectorTemporarySearchResultsInPlace() {
 
   if (!searchResults.length) {
     const empty = document.createElement("span");
-    empty.textContent = "输入姓名后显示匹配老人";
+    empty.textContent = "杈撳叆濮撳悕鍚庢樉绀哄尮閰嶈€佷汉";
     panel.appendChild(empty);
     return;
   }
@@ -651,7 +922,7 @@ function renderDirectorTemporarySearchResultsInPlace() {
     button.type = "button";
     button.dataset.action = "select-director-temporary-elder";
     button.dataset.value = elder.id;
-    button.textContent = `${elder.floor}F · ${elder.room}室 · ${elder.name}`;
+    button.textContent = `${elder.floor}F 路 ${elder.room}瀹?路 ${elder.name}`;
     panel.appendChild(button);
   });
 }
@@ -727,6 +998,15 @@ function navigateBackByPageLayer() {
 
   if (state.ui.taskRecordDialog) {
     actions.closeTaskRecordDialog();
+    return true;
+  }
+
+  if (state.ui.selectedCaregiverReportElderId) {
+    if (Number.isInteger(state.ui.caregiverRecordPhotoPreviewIndex)) {
+      actions.closeCaregiverRecordPhotoPreview();
+      return true;
+    }
+    actions.closeCaregiverRecordDetail();
     return true;
   }
 
@@ -828,7 +1108,6 @@ function navigateBackByPageLayer() {
     "director-dispatch": "director-home",
     "director-inventory": "director-home",
     "director-anomaly": "director-home",
-    "director-read-inbox": "director-anomaly",
     "director-statistics": "director-home",
   };
 
@@ -952,14 +1231,14 @@ function deriveDailyCareFromReportItems(reportItems, template = state.dailyRepor
 
   return {
     morningCare: /晨|起床|早/.test(checkedLabels),
-    eveningCare: /晚/.test(checkedLabels),
-    feedingWater: /水/.test(checkedLabels),
-    feedingMeal: /餐|饭/.test(checkedLabels),
+    eveningCare: /晚|睡前/.test(checkedLabels),
+    feedingWater: /水|饮水/.test(checkedLabels),
+    feedingMeal: /餐|饮食|助餐|喂饭/.test(checkedLabels),
     hygiene: /洗脸|刷牙|梳头|口腔|面部|卫生|清洁/.test(checkedLabels),
     dressing: /更衣|穿衣/.test(checkedLabels),
     turning: /翻身/.test(checkedLabels),
     toiletAssist: /下床|行走|站立|坐立/.test(checkedLabels),
-    diaperPadChange: /尿不湿|护垫|会阴/.test(checkedLabels),
+    diaperPadChange: /尿不湿|护理垫|会阴/.test(checkedLabels),
     bathWipe: /洗澡|擦身|洗头|泡脚/.test(checkedLabels),
   };
 }
@@ -1234,6 +1513,38 @@ function collectCareRecordForm() {
   };
 }
 
+function collectInventoryItemForm() {
+  const form = document.querySelector("[data-inventory-item-form]");
+  if (!form) return {};
+  return {
+    name: form.elements.name?.value?.trim() || "",
+    category: form.elements.category?.value?.trim() || "",
+    unit: form.elements.unit?.value?.trim() || "件",
+    quantity: Number(form.elements.quantity?.value || 0),
+    warningQuantity: Number(form.elements.warningQuantity?.value || 0),
+    location: form.elements.location?.value?.trim() || "",
+  };
+}
+
+function collectInventoryUsageForm() {
+  const form = document.querySelector("[data-inventory-usage-form]");
+  if (!form) return {};
+  return {
+    itemId: form.elements.itemId?.value || "",
+    quantity: Number(form.elements.quantity?.value || 0),
+    note: form.elements.note?.value?.trim() || "",
+  };
+}
+
+function collectInventoryStockAdjustForm() {
+  const form = document.querySelector("[data-inventory-stock-adjust-form]");
+  if (!form) return {};
+  return {
+    mode: form.elements.mode?.value || "increase",
+    amount: Number(form.elements.amount?.value || 0),
+  };
+}
+
 function persistDirectorAssignmentDrafts() {
   if (!["director-template-library", "director-care-plans", "director-dispatch"].includes(state.ui.route)) return;
 
@@ -1314,18 +1625,18 @@ async function renderElementToCanvas(element) {
 }
 
 function buildCareRecordFileName(record, extension) {
-  const elderName = String(record?.elderName || "老人").replace(/[\\/:*?"<>|]/g, "-");
-  const room = String(record?.room || "房间").replace(/[\\/:*?"<>|]/g, "-");
-  const recordDate = String(record?.recordDate || "护理记录").replace(/[\\/:*?"<>|]/g, "-");
-  return `${recordDate}_${room}_${elderName}_监管归档表.${extension}`;
+  const elderName = String(record?.elderName || "鑰佷汉").replace(/[\\/:*?"<>|]/g, "-");
+  const room = String(record?.room || "鎴块棿").replace(/[\\/:*?"<>|]/g, "-");
+  const recordDate = String(record?.recordDate || "鎶ょ悊璁板綍").replace(/[\\/:*?"<>|]/g, "-");
+  return `${recordDate}_${room}_${elderName}_鐩戠褰掓。琛?${extension}`;
 }
 
 function buildDirectorExportFileName(record, extension) {
   const ext = String(extension || "png").replace(/^\./, "");
-  const elderName = String(record?.elderName || "老人").replace(/[\\/:*?"<>|]/g, "-");
-  const room = String(record?.room || "日报").replace(/[\\/:*?"<>|]/g, "-");
-  const recordDate = String(record?.recordDate || "护理记录").replace(/[\\/:*?"<>|]/g, "-");
-  return `${recordDate}_${room}_${elderName}_监管归档表.${ext}`;
+  const elderName = String(record?.elderName || "鑰佷汉").replace(/[\\/:*?"<>|]/g, "-");
+  const room = String(record?.room || "鏃ユ姤").replace(/[\\/:*?"<>|]/g, "-");
+  const recordDate = String(record?.recordDate || "鎶ょ悊璁板綍").replace(/[\\/:*?"<>|]/g, "-");
+  return `${recordDate}_${room}_${elderName}_鐩戠褰掓。琛?${ext}`;
 }
 
 async function exportDirectorCareRecordImage(preview, record) {
@@ -1347,7 +1658,7 @@ async function exportDirectorCareRecordImage(preview, record) {
           reader.readAsDataURL(svgBlob);
           const base64 = await base64Promise;
           window.AndroidBridge.saveBase64File(svgFileName, "image/svg+xml", base64);
-          actions.announce("图片已保存到下载目录");
+          actions.announce("鍥剧墖宸蹭繚瀛樺埌涓嬭浇鐩綍");
           return;
         } catch (_) {}
       }
@@ -1369,7 +1680,7 @@ async function exportDirectorCareRecordImage(preview, record) {
     if (window.AndroidBridge && typeof window.AndroidBridge.saveBase64File === "function") {
       try {
         window.AndroidBridge.saveBase64File(fileName, "image/png", imageDataUrl.split(",")[1] || "");
-        actions.announce("图片已保存到下载目录");
+        actions.announce("鍥剧墖宸蹭繚瀛樺埌涓嬭浇鐩綍");
         return;
       } catch (_) {}
     }
@@ -1383,7 +1694,7 @@ async function exportDirectorCareRecordImage(preview, record) {
     actions.announce("监管归档表图片已开始导出");
   } catch (error) {
     console.error(error);
-    actions.announce("图片导出失败，请稍后重试");
+    actions.announce("鍥剧墖瀵煎嚭澶辫触锛岃绋嶅悗閲嶈瘯");
   }
 }
 
@@ -1414,7 +1725,7 @@ function exportDirectorInboxCsv() {
   const csv = ["\ufeff" + headers.map(escapeCsvValue).join(","), ...csvRows].join("\n");
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
-  const date = currentSelectors.directorAuditFilters?.date || state.director.date || "今日";
+  const date = currentSelectors.directorAuditFilters?.date || state.director.date || "浠婃棩";
   const link = document.createElement("a");
   link.href = url;
   link.download = `${date}_日报收件箱_筛选清单.csv`;
@@ -1433,8 +1744,8 @@ function runPendingDirectorCareRecordAction() {
   const record = state.ui.directorCareRecordBatchDate
     ? {
         recordDate: state.ui.directorCareRecordBatchDate,
-        room: "日报",
-        elderName: "当日全部日报",
+        room: "鏃ユ姤",
+        elderName: "褰撴棩鍏ㄩ儴鏃ユ姤",
       }
     : state.ui.directorCareRecordDraft;
   if (!preview || !record) return;
@@ -1465,6 +1776,75 @@ function collectTaskRecordDialogForm() {
   };
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("file read failed"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function loadImageFromFile(file) {
+  if (window.createImageBitmap) {
+    return window.createImageBitmap(file).then((bitmap) => ({
+      width: bitmap.width,
+      height: bitmap.height,
+      drawTo(ctx, width, height) {
+        ctx.drawImage(bitmap, 0, 0, width, height);
+      },
+      close() {
+        bitmap.close?.();
+      },
+    }));
+  }
+
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({
+        width: image.naturalWidth || image.width,
+        height: image.naturalHeight || image.height,
+        drawTo(ctx, width, height) {
+          ctx.drawImage(image, 0, 0, width, height);
+        },
+        close() {},
+      });
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("image load failed"));
+    };
+    image.src = url;
+  });
+}
+
+async function compressTaskEvidenceImage(file) {
+  if (!file?.type?.startsWith("image/")) {
+    return readFileAsDataUrl(file);
+  }
+
+  const source = await loadImageFromFile(file);
+  try {
+    const scale = Math.min(1, TASK_EVIDENCE_MAX_EDGE / Math.max(source.width || 1, source.height || 1));
+    const width = Math.max(1, Math.round((source.width || 1) * scale));
+    const height = Math.max(1, Math.round((source.height || 1) * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { alpha: false });
+    if (!ctx) throw new Error("canvas unavailable");
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, width, height);
+    source.drawTo(ctx, width, height);
+    return canvas.toDataURL("image/jpeg", TASK_EVIDENCE_JPEG_QUALITY);
+  } finally {
+    source.close();
+  }
+}
+
 function captureTaskEvidence(target, file) {
   if (!file) {
     actions.setTaskEvidence(target, null);
@@ -1472,24 +1852,43 @@ function captureTaskEvidence(target, file) {
   }
 
   const evidence = {
-    name: file.name || "护理留痕照片",
+    name: file.name || "鎶ょ悊鐣欑棔鐓х墖",
     dataUrl: "",
     capturedAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
   };
 
-  const reader = new FileReader();
-  reader.onload = () => {
-    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
-    actions.setTaskEvidence(target, { ...evidence, dataUrl: String(reader.result || "") });
-  };
-  reader.onerror = () => {
-    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
-    actions.setTaskEvidence(target, evidence);
-  };
-  reader.readAsDataURL(file);
+  compressTaskEvidenceImage(file)
+    .catch(() => readFileAsDataUrl(file))
+    .then((dataUrl) => {
+      requestScrollRestore(state.ui.route, getScrollSnapshot());
+      actions.setTaskEvidence(target, { ...evidence, dataUrl });
+    })
+    .catch(() => {
+      requestScrollRestore(state.ui.route, getScrollSnapshot());
+      actions.setTaskEvidence(target, null);
+    });
 }
 
 function renderApp() {
+  if (isDirectorDatePickerProtected()) {
+    deferRenderUntilDirectorDatePickerSettles();
+    return;
+  }
+
+  if (
+    isDirectorScrollProtected(900) &&
+    !pendingScrollRestore &&
+    !pendingAnchorRestore &&
+    !lockedScrollRestore &&
+    !state.ui.directorPlanDraft &&
+    !state.ui.directorPlanItemDraft &&
+    !state.ui.directorPlanNoteDraft &&
+    !state.ui.directorPlanTemporaryDialogElderId
+  ) {
+    deferDirectorScrollRender();
+    return;
+  }
+
   rememberScrollPosition();
 
   const routeRenderer = routes[state.ui.route] || renderLoginPage;
@@ -1505,10 +1904,12 @@ function renderApp() {
       </section>
       ${renderTaskRecordDialog()}
       ${renderDirectorTaskDetail()}
+      ${renderCaregiverRecordDetail()}
       ${renderToast()}
     </main>
   `;
 
+  stabilizeDirectorPlanTimelineAfterRender();
   restoreScrollPosition(state.ui.route);
   restoreAnchorPosition();
   syncCaregiverTimelineFocus();
@@ -1516,8 +1917,18 @@ function renderApp() {
   runPendingDirectorCareRecordAction();
   syncDirectorCloudPolling();
   syncCaregiverTaskPolling();
+  syncCaregiverRecordRoute();
   syncInstitutionSharedStatePolling();
   syncLiveClockTimer();
+}
+
+function stabilizeDirectorPlanTimelineAfterRender() {
+  if (state.ui.route !== "director-care-plans") return;
+  if (!state.ui.directorPlanTimelineOpen || state.ui.directorPlanTimelineSettled) return;
+
+  // Keep the first drawer entrance animation on the current DOM, but make
+  // subsequent task-detail renders use the settled class instead of replaying it.
+  state.ui.directorPlanTimelineSettled = true;
 }
 
 async function handleLoginSubmit(event) {
@@ -1581,7 +1992,7 @@ function handleClick(event) {
     const password = trigger.dataset.password || "";
     state.ui.loginError = "";
     notify();
-    actions.login("demo-qinghe-care", username, password).catch((err) => {
+    actions.login("inst-001", username, password).catch((err) => {
       state.ui.loginError = err.message || "开发者登录失败";
       notify();
     });
@@ -1605,7 +2016,7 @@ function handleClick(event) {
     state.ui.loginError = "";
     notify();
     actions.login("", username, password).catch((err) => {
-      state.ui.loginError = err.message || "登录失败";
+      state.ui.loginError = err.message || "鐧诲綍澶辫触";
       notify();
     });
     return;
@@ -1616,8 +2027,22 @@ function handleClick(event) {
   if (action === "logout") return actions.logout();
   if (action === "app-back") return goBackOrNavigate(route);
   if (action === "navigate") return actions.navigate(route);
+  if (action === "refresh-caregiver-tasks") return actions.refreshCaregiverCloudTasks({ force: true });
   if (action === "choose-floor") return actions.chooseFloor(value);
-  if (action === "choose-room") return actions.chooseRoom(value);
+  if (action === "choose-room") return actions.chooseRoom(value, trigger.dataset.room || "");
+  if (action === "open-inventory-usage") return actions.openCaregiverInventoryUsage();
+  if (action === "open-inventory-usage-elder") return actions.openCaregiverInventoryUsageForElder(value);
+  if (action === "open-caregiver-record-tasks") return actions.openCaregiverElderRecordTasks(value, trigger.dataset.taskId || "");
+  if (action === "close-caregiver-record-detail") return actions.closeCaregiverRecordDetail();
+  if (action === "preview-caregiver-record-photo") return actions.openCaregiverRecordPhotoPreview(trigger.dataset.taskId || "", trigger.dataset.photoIndex || "0");
+  if (action === "close-caregiver-record-photo-preview") return actions.closeCaregiverRecordPhotoPreview();
+  if (action === "sync-auto-care-record") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    requestAnchorRestore("sync-auto-care-record", value);
+    return actions.syncCaregiverAutoCareRecord(value, { deferNotify: true });
+  }
+  if (action === "close-inventory-usage") return actions.closeCaregiverInventoryUsage();
+  if (action === "submit-inventory-usage") return actions.submitInventoryUsage(collectInventoryUsageForm());
   if (action === "open-daily-report") return actions.openCaregiverDailyReport(value);
   if (action === "open-batch-panel") return actions.openBatchPanel();
   if (action === "close-batch-panel") return actions.closeBatchPanel();
@@ -1747,6 +2172,14 @@ function handleClick(event) {
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
     return actions.setDirectorPersonnelFloor(value);
   }
+  if (action === "set-director-attendance-shift") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.setDirectorAttendanceShift(value);
+  }
+  if (action === "toggle-attendance-shift-settings") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.toggleAttendanceShiftSettings();
+  }
   if (action === "open-personnel-draft") {
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
     return actions.openDirectorPersonnelDraft(value);
@@ -1784,6 +2217,29 @@ function handleClick(event) {
     return actions.closeDirectorPersonnelPlanDetail();
   }
   if (action === "refresh-cloud-care-records") return actions.refreshDirectorCloudReports();
+  if (action === "refresh-cloud-inventory") {
+    lockScrollRestore(state.ui.route, getScrollSnapshot(), 2200);
+    return actions.refreshCloudInventory().finally(releaseScrollRestoreLock);
+  }
+  if (action === "open-inventory-date-picker") {
+    const input = trigger.closest(".inventory-date-filter")?.querySelector("[data-inventory-date-picker]");
+    if (input?.showPicker) input.showPicker();
+    else input?.focus();
+    return;
+  }
+  if (action === "open-inventory-item-draft") return actions.openInventoryItemDraft(value);
+  if (action === "close-inventory-item-draft") return actions.closeInventoryItemDraft();
+  if (action === "open-inventory-item-actions") return actions.openInventoryItemActions(value);
+  if (action === "close-inventory-item-actions") return actions.closeInventoryItemActions();
+  if (action === "open-inventory-stock-adjust") return actions.openInventoryStockAdjust(value);
+  if (action === "close-inventory-stock-adjust") return actions.closeInventoryStockAdjust();
+  if (action === "set-inventory-stock-adjust-mode") return actions.setInventoryStockAdjustMode(value);
+  if (action === "save-inventory-stock-adjust") return actions.saveInventoryStockAdjust(collectInventoryStockAdjustForm());
+  if (action === "delete-inventory-item") {
+    if (!window.confirm("确认删除这个物资？删除后院长端和员工端都不会再显示。")) return;
+    return actions.deleteInventoryItem(value);
+  }
+  if (action === "save-inventory-item") return actions.saveInventoryItem(collectInventoryItemForm());
   if (action === "load-cloud-care-record") return actions.loadDirectorCareRecordFromCloud(value);
   if (action === "set-director-inbox-month") {
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
@@ -1812,6 +2268,10 @@ function handleClick(event) {
   if (action === "open-report-template-editor") {
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
     return actions.openDailyReportTemplateEditor();
+  }
+  if (action === "new-report-template-instance") {
+    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    return actions.createNewDailyReportTemplateInstanceFromCurrent(collectDailyReportTemplateDraft());
   }
   if (action === "open-report-template-import") {
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
@@ -1867,7 +2327,7 @@ function handleClick(event) {
     return actions.closeDailyReportTemplateSchedule();
   }
   if (action === "add-report-template-item-from-schedule") {
-    const label = window.prompt("请输入子标题名称", "");
+    const label = window.prompt("璇疯緭鍏ュ瓙鏍囬鍚嶇О", "");
     if (label === null) return;
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
     return actions.addDailyReportTemplateItem(collectDailyReportTemplateDraft(), value, {
@@ -1889,7 +2349,7 @@ function handleClick(event) {
     return actions.selectDailyReportTemplateImportTemplate(value);
   }
   if (action === "apply-report-template-import") {
-    if (!window.confirm("导入后会覆盖当前编辑内容，确认导入？")) return;
+    if (!window.confirm("瀵煎叆鍚庝細瑕嗙洊褰撳墠缂栬緫鍐呭锛岀‘璁ゅ鍏ワ紵")) return;
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
     return actions.applyDailyReportTemplateImport(value);
   }
@@ -1910,7 +2370,7 @@ function handleClick(event) {
   if (action === "delete-report-template-item") {
     event.preventDefault();
     event.stopPropagation();
-    if (!window.confirm("确认删除这个子标题？")) return;
+    if (!window.confirm("纭鍒犻櫎杩欎釜瀛愭爣棰橈紵")) return;
     const row = trigger.closest("[data-report-template-item-row]");
     const section = trigger.closest("[data-report-template-section]");
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
@@ -1923,7 +2383,7 @@ function handleClick(event) {
   if (action === "delete-report-template-item-by-id") {
     event.preventDefault();
     event.stopPropagation();
-    if (!window.confirm("确认删除这个子标题？")) return;
+    if (!window.confirm("纭鍒犻櫎杩欎釜瀛愭爣棰橈紵")) return;
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
     return actions.deleteDailyReportTemplateItem(
       collectDailyReportTemplateDraft(),
@@ -1961,20 +2421,23 @@ function handleClick(event) {
   if (action === "edit-saved-report-template") {
     requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
     const tpl = (state.dailyReportTemplates || {})[value];
-    if (tpl) return actions.openDailyReportTemplateEditor(tpl);
+    if (tpl) return actions.openDailyReportTemplateEditor(tpl, { editExisting: true });
     return;
   }
   if (action === "director-view-task-detail") {
-    var _dtid = el.dataset.value || value;
+    var _dtid = trigger.dataset.value || value;
+    lockScrollRestore(state.ui.route, getDirectorTimelineScrollSnapshot(), 1800);
     actions.loadTaskEvidence(_dtid).then(function () {
       state.ui.directorTaskDetailId = _dtid;
       notify();
-    });
+    }).finally(releaseScrollRestoreLock);
     return;
   }
   if (action === "close-director-task-detail") {
+    lockScrollRestore(state.ui.route, getDirectorTimelineScrollSnapshot(), 1200);
     state.ui.directorTaskDetailId = "";
     notify();
+    releaseScrollRestoreLock();
     return;
   }
   if (action === "set-director-template-filter") return actions.setDirectorTemplateFilter(value);
@@ -2008,22 +2471,6 @@ function handleClick(event) {
   }
   if (action === "set-director-audit-filter") return actions.setDirectorAuditFilter(field, value);
   if (action === "select-director-elder") return actions.selectDirectorElder(value);
-  if (action === "mark-exception-read") {
-    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
-    return actions.markExceptionRead(value);
-  }
-  if (action === "restore-read-exception") {
-    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
-    return actions.restoreReadException(value);
-  }
-  if (action === "delete-read-exception") {
-    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
-    return actions.deleteReadException(value);
-  }
-  if (action === "delete-all-read-exceptions") {
-    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
-    return actions.deleteAllReadExceptions();
-  }
   if (action === "generate-care-record-preview") return actions.openDirectorCareRecordPreview(collectCareRecordForm());
   if (action === "close-care-record-preview") return actions.closeDirectorCareRecordPreview();
   if (action === "print-care-record" && state.ui.directorCareRecordBatchDate) {
@@ -2048,11 +2495,17 @@ function handleClick(event) {
     return;
   }
   if (action === "select-director-plan-room") {
-    requestAnchorRestore("preview-director-plan-room", value);
-    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    if (!state.ui.directorPlanTimelineOpen) {
+      directorPlanReturnScrollSnapshot = getScrollSnapshot();
+    }
+    lockScrollRestore(state.ui.route, getDirectorTimelineScrollSnapshot(), 1400);
     return actions.selectDirectorPlanRoom(value);
   }
-  if (action === "close-director-plan-timeline") return actions.closeDirectorPlanTimeline();
+  if (action === "close-director-plan-timeline") {
+    requestScrollRestore(state.ui.route, directorPlanReturnScrollSnapshot || getScrollSnapshot());
+    directorPlanReturnScrollSnapshot = null;
+    return actions.closeDirectorPlanTimeline();
+  }
   if (action === "reassign-elder-caregiver") {
     const elderId = trigger.dataset.elderId;
     const floor = Number(trigger.dataset.floor || 1);
@@ -2129,7 +2582,27 @@ function handleInput(event) {
 
   if (event.target.matches("[data-director-resident-search]")) {
     actions.setDirectorResidentSearch(event.target.value);
+    return;
   }
+
+  if (event.target.matches("[data-inventory-usage-filter]")) {
+    requestScrollRestore(state.ui.route, getScrollSnapshot());
+    actions.setInventoryUsageFilter({ [event.target.dataset.inventoryUsageFilter]: event.target.value });
+    return;
+  }
+
+  if (event.target.matches("[data-inventory-stock-adjust-form] input[name='amount']")) {
+    const form = event.target.closest("[data-inventory-stock-adjust-form]");
+    const mode = form?.elements.mode?.value || "increase";
+    const amount = Math.max(0, Number(event.target.value || 0));
+    const current = Number(state.ui.inventoryStockAdjustDraft?.currentQuantity || 0);
+    const unit = state.ui.inventoryStockAdjustDraft?.unit || "件";
+    const nextQuantity = Math.max(0, current + (mode === "decrease" ? -amount : amount));
+    const preview = form?.querySelector("[data-inventory-adjust-preview]");
+    if (preview) preview.textContent = `${nextQuantity}${unit}`;
+    return;
+  }
+
 }
 
 function handleChange(event) {
@@ -2138,8 +2611,13 @@ function handleChange(event) {
     return;
   }
 
+  if (event.target.matches("[data-care-record-date]")) {
+    actions.setCareRecordDate(event.target.value);
+    return;
+  }
+
   if (event.target.matches("[data-evidence-task]")) {
-    requestScrollRestore(state.ui.route, getCurrentContentScrollTop());
+    requestScrollRestore(state.ui.route, getScrollSnapshot());
     const taskNote = app.querySelector("[data-task-record-note]");
     if (taskNote) {
       actions.updateTaskRecordDialogNote(taskNote.value);
@@ -2162,7 +2640,14 @@ function handleChange(event) {
   }
 
   if (event.target.matches("[data-director-audit-date]")) {
+    clearDirectorDatePickerAutoRefresh();
     actions.setDirectorAuditDate(event.target.value);
+    return;
+  }
+
+  if (event.target.matches("[data-director-anomaly-date]")) {
+    clearDirectorDatePickerAutoRefresh();
+    actions.setDirectorAnomalyDate(event.target.value);
     return;
   }
 
@@ -2177,6 +2662,13 @@ function handleChange(event) {
     return;
   }
 
+  if (event.target.matches("[data-attendance-shift-time]")) {
+    actions.updateAttendanceShiftTemplate(event.target.dataset.shiftId || "", {
+      [event.target.dataset.field || "start"]: event.target.value,
+    });
+    return;
+  }
+
   if (event.target.matches("[data-report-template-import-institution]")) {
     actions.setDailyReportTemplateImportInstitution(event.target.value);
   }
@@ -2186,6 +2678,33 @@ document.addEventListener("click", handleClick);
 document.addEventListener("submit", handleLoginSubmit);
 document.addEventListener("input", handleInput);
 document.addEventListener("change", handleChange);
+document.addEventListener("focusin", (event) => {
+  if (event.target.matches("[data-task-record-note]")) {
+    stabilizeTaskRecordNoteFocus(event.target);
+  }
+  if (event.target.matches("[data-director-audit-date]")) {
+    holdDirectorDatePickerAutoRefresh();
+  }
+  if (event.target.matches("[data-director-anomaly-date]")) {
+    holdDirectorDatePickerAutoRefresh();
+  }
+});
+document.addEventListener("pointerdown", (event) => {
+  if (event.target.closest("[data-director-audit-date], .director-floor-calendar-button")) {
+    holdDirectorDatePickerAutoRefresh();
+  }
+  if (event.target.closest("[data-director-anomaly-date]")) {
+    holdDirectorDatePickerAutoRefresh();
+  }
+});
+document.addEventListener("focusout", (event) => {
+  if (event.target.matches("[data-director-audit-date]")) {
+    releaseDirectorDatePickerAutoRefresh();
+  }
+  if (event.target.matches("[data-director-anomaly-date]")) {
+    releaseDirectorDatePickerAutoRefresh();
+  }
+});
 document.addEventListener("contextmenu", (event) => {
   const preview = event.target.closest("[data-evidence-preview-task]");
   if (!preview) return;
@@ -2212,10 +2731,14 @@ document.addEventListener("dragstart", (event) => {
   const elderId = tag.dataset.elderId;
   const floor = tag.dataset.floor;
   if (elderId && floor) {
-    event.dataTransfer.setData("text/plain", JSON.stringify({ elderId, floor }));
-    event.dataTransfer.effectAllowed = "move";
+    directorElderAssignmentDrag = { elderId, floor };
+    event.dataTransfer?.setData?.("text/plain", JSON.stringify({ elderId, floor }));
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
     tag.style.opacity = "0.5";
-    const onEnd = () => { tag.style.opacity = ""; };
+    const onEnd = () => {
+      tag.style.opacity = "";
+      window.setTimeout(() => { directorElderAssignmentDrag = null; }, 0);
+    };
     tag.addEventListener("dragend", onEnd, { once: true });
   }
 });
@@ -2239,13 +2762,20 @@ document.addEventListener("drop", (event) => {
   event.preventDefault();
   dropZone.classList.remove("is-drag-over");
   try {
-    const raw = event.dataTransfer.getData("text/plain");
-    const { elderId } = JSON.parse(raw);
+    const raw = event.dataTransfer?.getData?.("text/plain") || "";
+    const parsed = raw ? JSON.parse(raw) : directorElderAssignmentDrag || {};
+    const { elderId } = parsed;
     const caregiverId = dropZone.dataset.dropCaregiverId;
     if (elderId && caregiverId) {
       actions.reassignElderToCaregiver(elderId, caregiverId);
+    } else {
+      actions.announce("拖拽分配未识别，请重新拖动老人标签");
     }
-  } catch (_) {}
+  } catch (_) {
+    actions.announce("拖拽分配失败，请重新拖动老人标签");
+  } finally {
+    directorElderAssignmentDrag = null;
+  }
 });
 window.addEventListener("popstate", (event) => {
   const snapshot = event.state?.appNav;
@@ -2255,6 +2785,18 @@ window.addEventListener("popstate", (event) => {
   lastHistorySignature = JSON.stringify(snapshot);
   actions.restoreNavigationSnapshot(snapshot);
   isRestoringBrowserHistory = false;
+});
+
+syncVisualViewportMetrics();
+window.addEventListener("resize", syncVisualViewportMetrics);
+window.addEventListener("orientationchange", () => window.setTimeout(syncVisualViewportMetrics, 120));
+window.visualViewport?.addEventListener("resize", () => {
+  syncVisualViewportMetrics();
+  stabilizeTaskRecordNoteFocus();
+});
+window.visualViewport?.addEventListener("scroll", () => {
+  syncVisualViewportMetrics();
+  stabilizeTaskRecordNoteFocus();
 });
 
 window.__elderServeAndroidBack = navigateBackByPageLayer;
@@ -2303,7 +2845,9 @@ function syncDirectorCloudPolling() {
   }
 
   if (!state._holdNotify && !state._loadingDirectorData) {
-    actions.refreshDirectorCloudTasks({ silent: true });
+    if (!isEditingTextInput() && !isDirectorDatePickerProtected() && !isInventoryModalInputActive() && !isDirectorScrollProtected()) {
+      actions.refreshDirectorCloudTasks({ silent: true });
+    }
     if (state.ui.route === "director-care-records") {
       actions.refreshDirectorCloudReports({ silent: true });
     }
@@ -2311,6 +2855,9 @@ function syncDirectorCloudPolling() {
 
   if (!directorCloudPollTimer) {
     directorCloudPollTimer = window.setInterval(() => {
+      if (isEditingTextInput() || isDirectorDatePickerProtected()) return;
+      if (isInventoryModalInputActive()) return;
+      if (isDirectorScrollProtected()) return;
       actions.refreshDirectorCloudTasks({ silent: true });
     }, DIRECTOR_TASK_POLL_INTERVAL_MS);
   }
@@ -2336,16 +2883,49 @@ function syncCaregiverTaskPolling() {
 
   if (caregiverTaskPollTimer) return;
 
-  actions.refreshCaregiverCloudTasks({ silent: true });
+  actions.refreshCaregiverCloudTasks({ silent: true, ensureInstitutionState: true });
   caregiverTaskPollTimer = window.setInterval(() => {
     actions.refreshCaregiverCloudTasks({ silent: true });
   }, 10000);
+}
+
+function syncCaregiverRecordRoute() {
+  const shouldSync =
+    state.session.identity === "caregiver" &&
+    state.session.loggedIn &&
+    state.ui.route === "history" &&
+    !isEditingTextInput();
+
+  if (!shouldSync) {
+    caregiverRecordSyncSignature = "";
+    return;
+  }
+
+  const recordDate = state.ui.historyFilter?.time && /^\d{4}-\d{2}-\d{2}$/.test(state.ui.historyFilter.time)
+    ? state.ui.historyFilter.time
+    : selectors().caregiverTaskRecordDate;
+  const signature = [
+    state.session.user?.institutionId || state.caregiver?.institutionId || state.institution?.id || "",
+    state.caregiver?.id || "",
+    recordDate || "",
+  ].join("|");
+
+  if (signature && signature !== caregiverRecordSyncSignature) {
+    caregiverRecordSyncSignature = signature;
+    actions.refreshCaregiverTaskRecords({ silent: true, recordDate });
+  }
 }
 
 function isEditingTextInput() {
   const active = document.activeElement;
   if (!active) return false;
   return Boolean(active.closest?.("input, textarea, select, [contenteditable='true']"));
+}
+
+function isInventoryModalInputActive() {
+  const active = document.activeElement;
+  if (!active) return false;
+  return Boolean(active.closest?.("[data-inventory-stock-adjust-form], [data-inventory-item-form]"));
 }
 
 function getLiveClockText() {
@@ -2362,7 +2942,13 @@ function updateLiveClockNodes() {
   const minute = new Date().getMinutes();
   if (minute !== lastClockMinute) {
     lastClockMinute = minute;
-    if ((state.session.identity === "director" || state.session.identity === "admin" || state.session.identity === "superadmin") && state.session.loggedIn) {
+    if (
+      (state.session.identity === "director" || state.session.identity === "admin" || state.session.identity === "superadmin") &&
+      state.session.loggedIn &&
+      !isEditingTextInput() &&
+      !isInventoryModalInputActive() &&
+      !isDirectorScrollProtected()
+    ) {
       actions.tickClock();
     }
   }
@@ -2399,13 +2985,20 @@ function syncInstitutionSharedStatePolling() {
   if (institutionStatePollTimer) return;
 
   if (!state._holdNotify) {
-    actions.refreshInstitutionSharedState({ silent: true });
+    if (!isDirectorScrollProtected()) {
+      actions.refreshInstitutionSharedState({ silent: true });
+    }
   }
   institutionStatePollTimer = window.setInterval(() => {
     if (isEditingTextInput()) return;
+    if (isDirectorScrollProtected()) return;
     actions.refreshInstitutionSharedState({ silent: true });
   }, 12000);
 }
+
+app.addEventListener("scroll", markUserScrollActivity, true);
+app.addEventListener("touchmove", markUserScrollActivity, { passive: true });
+app.addEventListener("wheel", markUserScrollActivity, { passive: true });
 
 subscribe(renderApp);
 registerServiceWorker();
@@ -2421,8 +3014,30 @@ registerServiceWorker();
       state.session.user = result.user;
       state.session.identity = result.user.role;
       state.session.loggedIn = true;
+      const instId = actions.bindSessionUserToState
+        ? actions.bindSessionUserToState(result.user)
+        : (result.user.institutionId || "");
+      if (instId) {
+        await actions._loadCloudInstitutionInfo(instId);
+      }
       const role = result.user.role;
       if (role === "caregiver") {
+        const roleEntityId = result.user.roleEntityId || "";
+        if (roleEntityId) {
+          state.caregiver = {
+            id: roleEntityId,
+            name: result.user.displayName || result.user.username || "鎶ゅ伐",
+            username: result.user.username || "",
+            role: "鎶ゅ伐",
+            floor: 1,
+            shift: "",
+            status: "on-duty",
+            cloudUserId: result.user.id || "",
+            cloudUserStatus: result.user.status || "active",
+            institutionId: instId || state.institution.id || "",
+          };
+          state.caregivers = [state.caregiver, ...(state.caregivers || []).filter(function(c) { return c.id !== roleEntityId; })];
+        }
         state.ui.route = "attendance";
         state.ui.activeTab = "home";
       } else if (role === "family") {
@@ -2435,19 +3050,36 @@ registerServiceWorker();
       renderApp();
       if (role === "caregiver") {
         const roleEntityId = result.user.roleEntityId || "";
-        const instId = result.user.institutionId || "";
         if (instId) await actions._loadCloudPersonnel(instId);
         if (roleEntityId) {
           const matched = state.caregivers.find(function(c) { return c.id === roleEntityId; });
-          if (matched) state.caregiver = { ...matched };
+          if (matched) {
+            state.caregiver = { ...matched };
+          } else {
+            state.caregiver = {
+              id: roleEntityId,
+              name: result.user.displayName || result.user.username || "鎶ゅ伐",
+              username: result.user.username || "",
+              role: "鎶ゅ伐",
+              floor: 1,
+              shift: "",
+              status: "on-duty",
+              cloudUserId: result.user.id || "",
+              cloudUserStatus: result.user.status || "active",
+              institutionId: instId || state.institution.id || "",
+            };
+            state.caregivers = [state.caregiver, ...(state.caregivers || []).filter(function(c) { return c.id !== roleEntityId; })];
+          }
         }
-        if (!state.caregiver?.id) {
+        if (!state.caregiver?.id && !roleEntityId) {
           const cgName = result.user.displayName || result.user.username || "";
           const byName = state.caregivers.find(function(c) { return c.name === cgName; });
           if (byName) state.caregiver = { ...byName };
         }
-        actions.refreshInstitutionSharedState({ silent: true });
+        await actions.refreshInstitutionSharedState({ silent: true });
+        await actions.refreshCaregiverCloudTasks({ silent: true, force: true });
       } else if (role === "director" || role === "admin" || role === "superadmin") {
+        if (instId) await actions._loadCloudPersonnel(instId);
         actions.loadDirectorInitialData();
       }
       return;
