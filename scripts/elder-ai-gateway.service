@@ -1,0 +1,18 @@
+[Unit]
+Description=Elder Serve AI Gateway
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/elder_ai_gateway
+EnvironmentFile=/etc/elder_backend.env
+Environment=PYTHONUNBUFFERED=1
+Environment=ELDER_AI_DEFAULT_MODEL=deepseek-ai/DeepSeek-V3.2
+Environment=ELDER_AI_FALLBACK_MODEL=deepseek-ai/DeepSeek-V3.2
+Environment=ELDER_AI_HEARTBEAT_PATH=/var/lib/elder_ai_gateway/heartbeat.json
+ExecStart=/home/ubuntu/elder_backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 18891
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

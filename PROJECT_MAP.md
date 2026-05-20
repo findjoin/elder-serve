@@ -3383,3 +3383,37 @@ director-care-plans 页面拖拽/点击分配老人
 - AI 不能跨机构读取上下文。
 - 写操作必须有确认卡片和操作日志后才能执行，不能从自然语言直接落库。
 - 通用头部里的入口不能只在某一个页面渲染对应弹窗；入口和面板必须在同一全局作用域可用。
+
+### 2026-05-21 院长端 AI 智能网关低成本改造
+
+现象：
+- OpenClaw 直连效果可用，但每次请求携带长上下文，公益项目长期使用成本过高。
+- 用户希望保留泛化能力，不采用纯本地规则，而是自建智能网关，只保留人格、用户信息、心跳和必要上下文。
+
+架构决策：
+- 新增 `ai_gateway/` 独立服务，后端通过 `ELDER_AI_GATEWAY_URL` 调用本机网关。
+- 网关复用服务器 `/etc/elder_backend.env` 里的上游 URL/key，不把 key 写进仓库。
+- 先不做技能包；后续按功能需要再加入。
+- 默认模型选择 `deepseek-ai/DeepSeek-V3.2`，原因是已通过当前 OpenClaw 网关 `/v1/responses` 白名单验证；截图里的其它候选当前返回 `model not allowed`，不能直接配置。
+
+实现：
+- `ai_gateway/main.py`：新增 FastAPI 网关，提供 `/healthz`、`/heartbeat`、`/v1/director-assistant`。
+- `ai_gateway/persona.md`：院长端助手人格、边界和 JSON 输出要求。
+- `scripts/elder-ai-gateway.service`：systemd 守护进程模板，监听 `127.0.0.1:18891`，避免和现有 OpenClaw 网关端口冲突。
+- `remote-main.py`：`/api/ai/director-assistant` 优先调用智能网关；网关不可用时临时回退旧 OpenClaw 直连。
+- `remote-main.py`：新增压缩上下文构建器，只传统计摘要、未分配老人、未分配任务、库存预警等，不再把长列表塞进模型。
+- `DATA_ARCHITECTURE.md`：记录智能网关边界、上下文压缩、模型路由和心跳文件。
+
+验证：
+- `python -m py_compile remote-main.py` 必须通过。
+- `python -m py_compile ai_gateway/main.py` 必须通过。
+- 云端 `elder-ai-gateway.service` 必须 `active`。
+- `curl http://127.0.0.1:18891/healthz` 应返回默认模型。
+- 院长端 AI 请求返回字段中应包含 `gateway=elder-ai-gateway`，否则说明走了旧 OpenClaw 兜底。
+- 模型候选必须通过真实接口探测，不能只按模型广场展示名填写；OpenClaw 会把部分模型映射成内部名并拒绝未授权模型。
+
+禁止再犯：
+- 院长 AI 不能恢复“每次把全量老人/任务/库存塞给模型”的长上下文方式。
+- 模型 key 只能存在服务端环境变量或服务器配置文件，不能进入前端、仓库文档或日志。
+- 智能网关不能直接写业务数据库；写操作必须继续走后端白名单 API 和确认卡片。
+- 技能包未正式设计前，不能临时把大段项目文档塞进 prompt 冒充技能。
