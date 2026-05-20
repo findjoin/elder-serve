@@ -3243,3 +3243,31 @@ director-care-plans 页面拖拽/点击分配老人
 - 后台轮询不能跳过状态检查直接全量覆盖 state；数据没变化不能触发重渲染。
 - `storage_used_bytes` 只能由后端统计，不允许前端提交或本地估算。
 - 机构暂停必须在后端鉴权链路拦截，不能只靠前端隐藏按钮。
+
+### 2026-05-21 任务卡同步时快时慢与轮询重叠修复
+
+现象：
+- 护工端打卡后，院长端有时秒级看到任务卡变化，有时需要等待二十多秒。
+- 用户担心如果某次同步请求一直不响应，前端会不会长期不刷新。
+
+根因：
+- 院长端任务状态检查间隔是 3 秒，护工端任务轮询间隔是 10 秒；如果刚好错过一轮，就要等下一轮。
+- `requestJson()` 默认 30 秒超时，旧任务轮询没有单飞锁；网络抖动或服务器慢响应时，同一日期任务刷新可能重叠发起，多轮请求互相拖慢。
+- `/api/sync/status` 是轻量状态检查，正常情况下很快；但它和 `/api/tasks` 旧逻辑都沿用 30 秒默认超时，导致“慢的时候二十多秒”是可能发生的。
+
+修复：
+- `cloudApi.js`：`fetchSyncStatus()` 和 `fetchPublishedTasks()` 支持前端传入 `timeout`，且不会把 `timeout` 拼进 URL 查询参数。
+- `state.js`：任务状态检查超时固定为 6 秒，任务明细拉取超时固定为 10 秒。
+- `state.js`：新增 `taskRefreshInFlight` 单飞锁；同一端、同一机构、同一日期、同一护工的任务刷新如果上一轮还没结束，下一轮直接复用上一轮 Promise，不再叠加请求。
+- 超时或失败不提交本地 sync version，下一轮轮询仍会继续检查并拉取，避免一次失败后永久误判“无变化”。
+
+验证：
+- `node --check caregiver-app/src/utils/cloudApi.js` 通过。
+- `node --check caregiver-app/src/store/state.js` 通过。
+- `git diff --check -- caregiver-app/src/utils/cloudApi.js caregiver-app/src/store/state.js PROJECT_MAP.md` 通过。
+- 前端发布后确认 APK 安装版本。
+
+禁止再犯：
+- 轮询类任务必须有 in-flight 单飞锁，不能允许慢请求堆积。
+- 轻量状态检查和全量数据拉取必须分别设置短超时；不能把 30 秒默认超时用于高频轮询。
+- 只有确认无需拉取或拉取成功后，才能提交本地 sync version；失败不能污染版本缓存。

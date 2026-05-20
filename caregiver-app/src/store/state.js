@@ -57,6 +57,12 @@ let caregiverCareReportsRequestInFlight = false;
 const taskEvidenceRequestsInFlight = new Set();
 let institutionStateRefreshInFlight = null;
 const syncDomainVersions = {};
+const TASK_SYNC_STATUS_TIMEOUT_MS = 6000;
+const TASK_SYNC_FETCH_TIMEOUT_MS = 10000;
+const taskRefreshInFlight = {
+  caregiver: null,
+  director: null,
+};
 const DEFAULT_SHIFT_TEMPLATES = [
   { id: "morning", name: "早班", start: "07:00", end: "15:00" },
   { id: "afternoon", name: "午班", start: "15:00", end: "23:00" },
@@ -2678,7 +2684,13 @@ async function checkCloudSyncDomains(domains = [], options = {}) {
     const key = getSyncVersionKey(institutionId, recordDate, domain);
     if (syncDomainVersions[key]) known[domain] = syncDomainVersions[key];
   });
-  const response = await fetchSyncStatus({ institutionId, recordDate, domains: domainList, known });
+  const response = await fetchSyncStatus({
+    institutionId,
+    recordDate,
+    domains: domainList,
+    known,
+    timeout: options.timeout || TASK_SYNC_STATUS_TIMEOUT_MS,
+  });
   const domainStatus = response?.domains || {};
   if (options.commit !== false) {
     commitCloudSyncDomains(domainStatus, { institutionId, recordDate });
@@ -6426,6 +6438,11 @@ export const actions = {
     }
     const syncDate = getCaregiverRecordDate(options);
     state.ui.caregiverTaskRecordDate = syncDate;
+    const requestKey = [syncInstitutionId, syncCaregiverId, syncDate].join("|");
+    if (taskRefreshInFlight.caregiver?.key === requestKey) {
+      return taskRefreshInFlight.caregiver.promise;
+    }
+    const runRefresh = async () => {
     const buildTaskSignature = () =>
       JSON.stringify(
         state.tasks
@@ -6484,6 +6501,7 @@ export const actions = {
         recordDate: syncDate,
         limit: options.limit || 100,
         light: true,
+        timeout: options.timeout || TASK_SYNC_FETCH_TIMEOUT_MS,
       });
       const nextItems = Array.isArray(response?.items)
         ? response.items
@@ -6541,11 +6559,27 @@ export const actions = {
         notify();
       }
     }
+    };
+    const promise = runRefresh();
+    taskRefreshInFlight.caregiver = { key: requestKey, promise };
+    try {
+      return await promise;
+    } finally {
+      if (taskRefreshInFlight.caregiver?.promise === promise) {
+        taskRefreshInFlight.caregiver = null;
+      }
+    }
   },
   async refreshDirectorCloudTasks(options = {}) {
     if (state.session.identity !== "director" && state.session.identity !== "admin" && state.session.identity !== "superadmin") return;
 
     if (!isCloudSyncConfigured()) return;
+    const syncDate = options.recordDate || state.director.date || formatNowDate();
+    const requestKey = [state.institution.id || "", syncDate].join("|");
+    if (taskRefreshInFlight.director?.key === requestKey) {
+      return taskRefreshInFlight.director.promise;
+    }
+    const runRefresh = async () => {
 
     // updatedAt excluded — changes on every fetch, would break signature no-op
     const buildTaskSignature = () =>
@@ -6555,7 +6589,6 @@ export const actions = {
 
     let shouldNotify = !options.silent;
     const beforeSignature = buildTaskSignature();
-    const syncDate = options.recordDate || state.director.date || formatNowDate();
 
     try {
       let pendingSyncStatus = null;
@@ -6578,6 +6611,7 @@ export const actions = {
         recordDate: syncDate,
         limit: options.limit || 200,
         light: true,
+        timeout: options.timeout || TASK_SYNC_FETCH_TIMEOUT_MS,
       });
       const nextItems = Array.isArray(response?.items)
         ? response.items
@@ -6622,6 +6656,16 @@ export const actions = {
       if (shouldNotify) {
         if (actions.patchDirectorTimeline()) return;
         notify();
+      }
+    }
+    };
+    const promise = runRefresh();
+    taskRefreshInFlight.director = { key: requestKey, promise };
+    try {
+      return await promise;
+    } finally {
+      if (taskRefreshInFlight.director?.promise === promise) {
+        taskRefreshInFlight.director = null;
       }
     }
   },

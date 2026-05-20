@@ -185,8 +185,10 @@ export async function fetchAttendanceRecords(filters = {}) {
 
 export async function fetchSyncStatus(filters = {}) {
   const search = new URLSearchParams();
+  const timeout = Number(filters.timeout || 0) || undefined;
 
   Object.entries(filters).forEach(([key, value]) => {
+    if (key === "timeout") return;
     if (value === undefined || value === null || value === "") return;
     if (key === "known" && typeof value === "object") {
       search.set(key, JSON.stringify(value));
@@ -200,7 +202,7 @@ export async function fetchSyncStatus(filters = {}) {
   });
 
   const suffix = search.toString() ? `?${search.toString()}` : "";
-  return requestJson(`/api/sync/status${suffix}`);
+  return requestJson(`/api/sync/status${suffix}`, { timeout });
 }
 
 export async function upsertAttendanceRecord(payload) {
@@ -267,14 +269,16 @@ export async function assignElderCaregiver(payload) {
 
 export async function fetchPublishedTasks(filters = {}) {
   const search = new URLSearchParams();
+  const timeout = Number(filters.timeout || 0) || undefined;
 
   Object.entries(filters).forEach(([key, value]) => {
+    if (key === "timeout") return;
     if (value === undefined || value === null || value === "") return;
     search.set(key, String(value));
   });
 
   const suffix = search.toString() ? `?${search.toString()}` : "";
-  return requestJson(`/api/tasks${suffix}`);
+  return requestJson(`/api/tasks${suffix}`, { timeout });
 }
 
 export async function fetchLatestAppRelease(filters = {}) {
