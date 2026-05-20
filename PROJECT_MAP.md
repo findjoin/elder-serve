@@ -3398,6 +3398,7 @@ director-care-plans 页面拖拽/点击分配老人
 
 实现：
 - `ai_gateway/main.py`：新增 FastAPI 网关，提供 `/healthz`、`/heartbeat`、`/v1/director-assistant`。
+- `ai_gateway/main.py`：默认模型返回 OpenClaw 内部工具痕迹时，自动切到 `ELDER_AI_RESCUE_MODEL` 重试，不能把“AI 不可用”直接暴露给院长端。
 - `ai_gateway/persona.md`：院长端助手人格、边界和 JSON 输出要求。
 - `scripts/elder-ai-gateway.service`：systemd 守护进程模板，监听 `127.0.0.1:18891`，避免和现有 OpenClaw 网关端口冲突。
 - `remote-main.py`：`/api/ai/director-assistant` 优先调用智能网关；网关不可用时临时回退旧 OpenClaw 直连。
@@ -3410,6 +3411,7 @@ director-care-plans 页面拖拽/点击分配老人
 - 云端 `elder-ai-gateway.service` 必须 `active`。
 - `curl http://127.0.0.1:18891/healthz` 应返回默认模型。
 - 院长端 AI 请求返回字段中应包含 `gateway=elder-ai-gateway`，否则说明走了旧 OpenClaw 兜底。
+- 默认模型异常时，院长端应得到救援模型的正常回答，而不是“内部工具痕迹已被拦截”的不可用提示。
 - 模型候选必须通过真实接口探测，不能只按模型广场展示名填写；OpenClaw 会把部分模型映射成内部名并拒绝未授权模型。
 
 禁止再犯：
@@ -3417,3 +3419,4 @@ director-care-plans 页面拖拽/点击分配老人
 - 模型 key 只能存在服务端环境变量或服务器配置文件，不能进入前端、仓库文档或日志。
 - 智能网关不能直接写业务数据库；写操作必须继续走后端白名单 API 和确认卡片。
 - 技能包未正式设计前，不能临时把大段项目文档塞进 prompt 冒充技能。
+- 不要把模型工具痕迹或 OpenClaw 内部工作区信息展示给院长；必须在网关层拦截或重试。

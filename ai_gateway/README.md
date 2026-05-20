@@ -9,12 +9,14 @@
 - 已通过当前 OpenClaw 网关 `/v1/responses` 白名单验证。
 - 本项目默认只传压缩上下文，不再让模型读取整院长上下文。
 - 失败时仍回退同一模型；如果模型输出工具痕迹，网关会拦截并返回低置信度提示。
+- 如果默认模型返回内部工具痕迹，网关会自动切到 `ELDER_AI_RESCUE_MODEL`，默认 `siliconflow/Qwen/Qwen2-VL-72B-Instruct`。该模型成本更高，但上下文仍是压缩后的，不再回到旧的全量上下文。
 
 ## 环境变量
 
 - `OPENCLAW_GATEWAY_URL` / `OPENCLAW_AUTH_TOKEN`：复用现有 OpenClaw 上游配置。
 - `ELDER_AI_DEFAULT_MODEL`：默认 `deepseek-ai/DeepSeek-V3.2`。
 - `ELDER_AI_FALLBACK_MODEL`：默认 `deepseek-ai/DeepSeek-V3.2`。
+- `ELDER_AI_RESCUE_MODEL`：默认 `siliconflow/Qwen/Qwen2-VL-72B-Instruct`。
 - `ELDER_AI_HEARTBEAT_PATH`：默认 `/var/lib/elder_ai_gateway/heartbeat.json`。
 
 ## 接口

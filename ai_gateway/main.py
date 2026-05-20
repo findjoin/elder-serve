@@ -24,6 +24,7 @@ UPSTREAM_URL = env("ELDER_AI_UPSTREAM_URL") or env("OPENCLAW_GATEWAY_URL", "http
 UPSTREAM_TOKEN = env("ELDER_AI_UPSTREAM_TOKEN") or env("OPENCLAW_AUTH_TOKEN", "")
 DEFAULT_MODEL = env("ELDER_AI_DEFAULT_MODEL", "deepseek-ai/DeepSeek-V3.2")
 FALLBACK_MODEL = env("ELDER_AI_FALLBACK_MODEL", "deepseek-ai/DeepSeek-V3.2")
+RESCUE_MODEL = env("ELDER_AI_RESCUE_MODEL", "siliconflow/Qwen/Qwen2-VL-72B-Instruct")
 TIMEOUT_SECONDS = float(env("ELDER_AI_TIMEOUT_SECONDS", "45"))
 
 app = FastAPI(title="Elder AI Gateway", version="0.1.0")
@@ -58,6 +59,7 @@ def write_heartbeat(status: str, extra: dict[str, Any] | None = None) -> None:
         "upstreamUrl": UPSTREAM_URL,
         "defaultModel": DEFAULT_MODEL,
         "fallbackModel": FALLBACK_MODEL,
+        "rescueModel": RESCUE_MODEL,
         **(extra or {}),
     }
     try:
@@ -68,7 +70,7 @@ def write_heartbeat(status: str, extra: dict[str, Any] | None = None) -> None:
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
-    if "functions." in text or "/root/.openclaw" in text or "memory/*.md" in text:
+    if contains_tool_trace(text):
         raise ValueError("model returned tool trace instead of assistant JSON")
     try:
         parsed = json.loads(text)
@@ -83,6 +85,10 @@ def extract_json_object(text: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ValueError("model response JSON is not an object")
     return parsed
+
+
+def contains_tool_trace(text: str) -> bool:
+    return "functions." in text or "/root/.openclaw" in text or "memory/*.md" in text or "sessions_history" in text
 
 
 def build_prompt(payload: DirectorAssistantPayload) -> str:
@@ -188,6 +194,7 @@ def healthz() -> dict[str, Any]:
         "status": "ok",
         "service": "elder-ai-gateway",
         "defaultModel": DEFAULT_MODEL,
+        "rescueModel": RESCUE_MODEL,
         "upstreamConfigured": bool(UPSTREAM_TOKEN and UPSTREAM_URL),
     }
 
@@ -219,10 +226,19 @@ async def director_assistant(payload: DirectorAssistantPayload) -> dict[str, Any
         result = await call_model(FALLBACK_MODEL, prompt)
 
     raw_text = result["text"]
+    if contains_tool_trace(raw_text) and RESCUE_MODEL and result["model"] != RESCUE_MODEL:
+        write_heartbeat("rescuing", {
+            "lastRequestAt": now_iso(),
+            "lastModel": result["model"],
+            "rescueModel": RESCUE_MODEL,
+            "reason": "tool_trace",
+        })
+        result = await call_responses_api(RESCUE_MODEL, prompt)
+        raw_text = result["text"]
     try:
         parsed = extract_json_object(raw_text)
     except Exception:
-        if "functions." in raw_text or "/root/.openclaw" in raw_text or "memory/*.md" in raw_text:
+        if contains_tool_trace(raw_text):
             parsed = {
                 "reply": "AI 网关已连接，但当前模型返回了内部工具痕迹，已被拦截。请稍后重试，或切换更适合文本对话的模型。",
                 "suggestedActions": [],
