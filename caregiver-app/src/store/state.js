@@ -54,11 +54,13 @@ const DIRECTOR_AUDIT_PROJECTS = [
 
 let directorCareReportsRequestInFlight = false;
 let caregiverCareReportsRequestInFlight = false;
+let inventoryRefreshInFlight = null;
 const taskEvidenceRequestsInFlight = new Set();
 let institutionStateRefreshInFlight = null;
 const syncDomainVersions = {};
 const TASK_SYNC_STATUS_TIMEOUT_MS = 6000;
 const TASK_SYNC_FETCH_TIMEOUT_MS = 10000;
+const INVENTORY_SYNC_STATUS_TIMEOUT_MS = 6000;
 const taskRefreshInFlight = {
   caregiver: null,
   director: null,
@@ -3980,7 +3982,7 @@ export const actions = {
       state.ui.pendingCareRecordAction = "";
     }
     if (route === "director-inventory" || route === "inventory-usage") {
-      actions.refreshCloudInventory({ silent: true });
+      actions.refreshCloudInventory({ silent: true, checkStatus: "force" });
     }
     if (route === "history") {
       actions.refreshCaregiverCloudTasks({ silent: true, recordDate: getHistoryFilterRecordDate() });
@@ -4026,7 +4028,7 @@ export const actions = {
     state.ui.route = "inventory-usage";
     state.ui.activeTab = "history";
     notify();
-    actions.refreshCloudInventory({ silent: true });
+    actions.refreshCloudInventory({ silent: true, checkStatus: "force" });
   },
   openCaregiverInventoryUsageForElder(elderId = "") {
     const elder = getElderById(elderId);
@@ -6134,40 +6136,86 @@ export const actions = {
       if (!options.silent) touchToast("云端接口未配置");
       return;
     }
-    const hasInventoryInputFocus = () =>
-      Boolean(
-        typeof document !== "undefined" &&
-          document.activeElement?.closest?.("[data-inventory-stock-adjust-form], [data-inventory-item-form]"),
-      );
-    setCloudInventoryLoading(true);
-    if (!options.preserveError) setCloudInventoryError("");
-    if (!options.silent) notify();
-    try {
-      const institutionId = getCurrentSessionInstitutionId();
-      const [itemsResponse, usagesResponse] = await Promise.all([
-        fetchInventoryItems({ institutionId }),
-        fetchInventoryUsages({
-          institutionId,
-          recordDate: options.recordDate || state.ui.inventoryUsageFilters?.recordDate || "",
-          itemName: options.itemName || state.ui.inventoryUsageFilters?.itemName || "",
-          limit: options.limit || 100,
-        }),
-      ]);
-      replaceInventoryItems(Array.isArray(itemsResponse?.items) ? itemsResponse.items : []);
-      mergeInventoryUsages(Array.isArray(usagesResponse?.items) ? usagesResponse.items : []);
-      setCloudInventoryFetchedAt(itemsResponse?.fetchedAt || usagesResponse?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`);
-      setCloudInventoryError("");
-      if (!options.silent) touchToast("库存已刷新");
-      if (!hasInventoryInputFocus()) {
-        notify();
-      } else {
+    const institutionId = getCurrentSessionInstitutionId();
+    const requestKey = [
+      institutionId,
+      options.recordDate || state.ui.inventoryUsageFilters?.recordDate || "",
+      options.itemName || state.ui.inventoryUsageFilters?.itemName || "",
+      options.limit || 100,
+    ].join("|");
+    if (inventoryRefreshInFlight?.key === requestKey) {
+      return inventoryRefreshInFlight.promise;
+    }
+    const runRefresh = async () => {
+      if (options.checkStatus && options.checkStatus !== "force") {
+        try {
+          const syncStatus = await checkCloudSyncDomains(["inventory"], {
+            institutionId,
+            recordDate: options.recordDate || state.director?.date || formatNowDate(),
+            timeout: options.statusTimeout || INVENTORY_SYNC_STATUS_TIMEOUT_MS,
+            commit: false,
+          });
+          if (syncStatus && !syncDomainChanged(syncStatus, "inventory")) {
+            commitCloudSyncDomains(syncStatus, {
+              institutionId,
+              recordDate: options.recordDate || state.director?.date || formatNowDate(),
+            });
+            setCloudInventoryFetchedAt(`${formatNowDate()} ${formatNowTime()}`);
+            setCloudInventoryError("");
+            return false;
+          }
+          options._pendingSyncStatus = syncStatus;
+        } catch (_) {}
+      }
+      const hasInventoryInputFocus = () =>
+        Boolean(
+          typeof document !== "undefined" &&
+            document.activeElement?.closest?.("[data-inventory-stock-adjust-form], [data-inventory-item-form]"),
+        );
+      setCloudInventoryLoading(true);
+      if (!options.preserveError) setCloudInventoryError("");
+      if (!options.silent) notify();
+      try {
+        const [itemsResponse, usagesResponse] = await Promise.all([
+          fetchInventoryItems({ institutionId }),
+          fetchInventoryUsages({
+            institutionId,
+            recordDate: options.recordDate || state.ui.inventoryUsageFilters?.recordDate || "",
+            itemName: options.itemName || state.ui.inventoryUsageFilters?.itemName || "",
+            limit: options.limit || 100,
+          }),
+        ]);
+        replaceInventoryItems(Array.isArray(itemsResponse?.items) ? itemsResponse.items : []);
+        mergeInventoryUsages(Array.isArray(usagesResponse?.items) ? usagesResponse.items : []);
+        setCloudInventoryFetchedAt(itemsResponse?.fetchedAt || usagesResponse?.fetchedAt || `${formatNowDate()} ${formatNowTime()}`);
+        setCloudInventoryError("");
+        if (options._pendingSyncStatus) {
+          commitCloudSyncDomains(options._pendingSyncStatus, {
+            institutionId,
+            recordDate: options.recordDate || state.director?.date || formatNowDate(),
+          });
+        }
+        if (!options.silent) touchToast("库存已刷新");
+        if (!hasInventoryInputFocus()) {
+          notify();
+        } else {
+          setCloudInventoryLoading(false);
+        }
+      } catch (error) {
+        setCloudInventoryError(error?.message || "库存云端同步失败");
+        if (!options.silent) touchToast(state.cloud.inventoryError);
+      } finally {
         setCloudInventoryLoading(false);
       }
-    } catch (error) {
-      setCloudInventoryError(error?.message || "库存云端同步失败");
-      if (!options.silent) touchToast(state.cloud.inventoryError);
+    };
+    const promise = runRefresh();
+    inventoryRefreshInFlight = { key: requestKey, promise };
+    try {
+      return await promise;
     } finally {
-      setCloudInventoryLoading(false);
+      if (inventoryRefreshInFlight?.promise === promise) {
+        inventoryRefreshInFlight = null;
+      }
     }
   },
   openInventoryItemDraft(itemId = "") {

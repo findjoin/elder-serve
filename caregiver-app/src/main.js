@@ -43,6 +43,7 @@ let directorCareReportsPollTimer = 0;
 let caregiverTaskPollTimer = 0;
 let caregiverRecordSyncSignature = "";
 let institutionStatePollTimer = 0;
+let directorInventoryPollTimer = 0;
 let liveClockTimer = 0;
 let lastUserScrollAt = 0;
 let deferredCarePlansRenderTimer = 0;
@@ -56,6 +57,7 @@ let directorElderAssignmentDrag = null;
 
 const DIRECTOR_TASK_POLL_INTERVAL_MS = 3000;
 const DIRECTOR_CARE_REPORT_POLL_INTERVAL_MS = 60000;
+const DIRECTOR_INVENTORY_POLL_INTERVAL_MS = 5000;
 
 const REPORT_TEMPLATE_SCHEDULE_START_MINUTES = 0;
 const REPORT_TEMPLATE_SCHEDULE_END_MINUTES = 24 * 60;
@@ -1918,6 +1920,7 @@ function renderApp() {
   syncDirectorCloudPolling();
   syncCaregiverTaskPolling();
   syncCaregiverRecordRoute();
+  syncDirectorInventoryPolling();
   syncInstitutionSharedStatePolling();
   syncLiveClockTimer();
 }
@@ -2914,6 +2917,29 @@ function syncCaregiverRecordRoute() {
     caregiverRecordSyncSignature = signature;
     actions.refreshCaregiverTaskRecords({ silent: true, recordDate });
   }
+}
+
+function syncDirectorInventoryPolling() {
+  const shouldPoll =
+    state.session.loggedIn &&
+    (state.session.identity === "director" || state.session.identity === "admin" || state.session.identity === "superadmin") &&
+    state.ui.route === "director-inventory";
+
+  if (!shouldPoll) {
+    window.clearInterval(directorInventoryPollTimer);
+    directorInventoryPollTimer = 0;
+    return;
+  }
+
+  if (!state._holdNotify && !isEditingTextInput() && !isInventoryModalInputActive() && !isDirectorScrollProtected()) {
+    actions.refreshCloudInventory({ silent: true, checkStatus: true });
+  }
+
+  if (directorInventoryPollTimer) return;
+  directorInventoryPollTimer = window.setInterval(() => {
+    if (isEditingTextInput() || isInventoryModalInputActive() || isDirectorScrollProtected()) return;
+    actions.refreshCloudInventory({ silent: true, checkStatus: true });
+  }, DIRECTOR_INVENTORY_POLL_INTERVAL_MS);
 }
 
 function isEditingTextInput() {

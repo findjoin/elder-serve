@@ -3296,3 +3296,30 @@ director-care-plans 页面拖拽/点击分配老人
 禁止再犯：
 - 所有用于同步版本、轮询判断、增量检查的 `updated_at` 必须由后端生成，不能信任前端传入时间。
 - 前端业务显示时间可以分钟级；后端事实表版本时间必须具备秒/微秒级变化能力。
+
+### 2026-05-21 院长端库存页不自动同步库存使用修复
+
+现象：
+- 护工端提交库存使用后，云端库存数量已经变化，但院长端库存页停留不动时数量不刷新。
+- 只有点击物资名片、手动刷新或重新进入库存页后，库存数量才会更新。
+
+根因：
+- 库存事实源是 `inventory_items.quantity` 和 `inventory_usages`，后端写使用记录时已经同步更新这两张表。
+- 前端院长端库存页只在进入页面、手动刷新、打开物资名片时调用 `refreshCloudInventory()`。
+- 后台轮询只覆盖任务、人员、模板等域，没有对 `inventory` 域做 `/api/sync/status` 检查，所以跨端库存变化不会主动刷新当前页面。
+
+修复：
+- `main.js`：新增院长端库存页专用 `syncDirectorInventoryPolling()`，停留在 `director-inventory` 时每 5 秒检查一次 `inventory` 域状态。
+- `state.js`：`refreshCloudInventory()` 支持 `checkStatus`，先走 `/api/sync/status?domains=inventory`，无变化不拉全量，有变化才拉 `inventory_items` 和 `inventory_usages`。
+- `state.js`：库存刷新增加 `inventoryRefreshInFlight` 单飞锁，避免慢请求叠加。
+- 进入库存页和护工端库存使用页时使用 `checkStatus: "force"` 强制首次全量刷新；后台轮询才使用轻量状态检查。
+
+验证：
+- `git diff --check -- caregiver-app/src/main.js caregiver-app/src/store/state.js PROJECT_MAP.md` 通过。
+- 前端发布后确认 APK 安装版本。
+- 护工端提交库存使用后，院长端库存页不点名片、不重新进入页面，也应在下一轮库存状态检查后刷新数量和使用流水。
+
+禁止再犯：
+- 新增事实表如果需要跨端实时感知，必须接入对应业务域的轻量状态检查轮询。
+- 页面“进入时刷新”和“点开详情刷新”不是跨端同步，不能替代后台状态检查。
+- 事实全集类库存列表刷新必须 replace 云端列表；流水可以按分页/筛选 merge。
