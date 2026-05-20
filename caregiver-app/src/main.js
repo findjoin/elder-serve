@@ -46,7 +46,7 @@ let institutionStatePollTimer = 0;
 let directorInventoryPollTimer = 0;
 let liveClockTimer = 0;
 let lastUserScrollAt = 0;
-let deferredCarePlansRenderTimer = 0;
+let deferredScrollRenderTimer = 0;
 let directorPlanReturnScrollSnapshot = null;
 let reportTemplateScheduleDrag = null;
 let skipCaregiverTimelineAutoFocus = false;
@@ -767,14 +767,26 @@ function isDirectorScrollProtected(windowMs = 1400) {
   return isDirectorRoute() && isUserRecentlyScrolling(windowMs);
 }
 
+function isCaregiverRoute(route = state.ui.route) {
+  return ["home", "room-select", "elder-detail", "task-detail", "history", "history-detail", "inventory-usage", "profile"].includes(route);
+}
+
+function isCaregiverScrollProtected(windowMs = 1400) {
+  return state.session.identity === "caregiver" && isCaregiverRoute() && isUserRecentlyScrolling(windowMs);
+}
+
+function isAppScrollProtected(windowMs = 1400) {
+  return isDirectorScrollProtected(windowMs) || isCaregiverScrollProtected(windowMs);
+}
+
 function isCarePlansScrollProtected(windowMs = 1400) {
   return state.ui.route === "director-care-plans" && isUserRecentlyScrolling(windowMs);
 }
 
-function deferDirectorScrollRender() {
-  window.clearTimeout(deferredCarePlansRenderTimer);
-  deferredCarePlansRenderTimer = window.setTimeout(() => {
-    deferredCarePlansRenderTimer = 0;
+function deferScrollProtectedRender() {
+  window.clearTimeout(deferredScrollRenderTimer);
+  deferredScrollRenderTimer = window.setTimeout(() => {
+    deferredScrollRenderTimer = 0;
     renderApp();
   }, 260);
 }
@@ -1878,7 +1890,7 @@ function renderApp() {
   }
 
   if (
-    isDirectorScrollProtected(900) &&
+    isAppScrollProtected(900) &&
     !pendingScrollRestore &&
     !pendingAnchorRestore &&
     !lockedScrollRestore &&
@@ -1887,7 +1899,7 @@ function renderApp() {
     !state.ui.directorPlanNoteDraft &&
     !state.ui.directorPlanTemporaryDialogElderId
   ) {
-    deferDirectorScrollRender();
+    deferScrollProtectedRender();
     return;
   }
 
@@ -2886,8 +2898,11 @@ function syncCaregiverTaskPolling() {
 
   if (caregiverTaskPollTimer) return;
 
-  actions.refreshCaregiverCloudTasks({ silent: true, ensureInstitutionState: true });
+  if (!isEditingTextInput() && !isCaregiverScrollProtected()) {
+    actions.refreshCaregiverCloudTasks({ silent: true, ensureInstitutionState: true });
+  }
   caregiverTaskPollTimer = window.setInterval(() => {
+    if (isEditingTextInput() || isCaregiverScrollProtected()) return;
     actions.refreshCaregiverCloudTasks({ silent: true });
   }, 10000);
 }
@@ -2897,7 +2912,8 @@ function syncCaregiverRecordRoute() {
     state.session.identity === "caregiver" &&
     state.session.loggedIn &&
     state.ui.route === "history" &&
-    !isEditingTextInput();
+    !isEditingTextInput() &&
+    !isCaregiverScrollProtected();
 
   if (!shouldSync) {
     caregiverRecordSyncSignature = "";
@@ -2931,13 +2947,13 @@ function syncDirectorInventoryPolling() {
     return;
   }
 
-  if (!state._holdNotify && !isEditingTextInput() && !isInventoryModalInputActive() && !isDirectorScrollProtected()) {
+  if (!state._holdNotify && !isEditingTextInput() && !isInventoryModalInputActive() && !isAppScrollProtected()) {
     actions.refreshCloudInventory({ silent: true, checkStatus: true });
   }
 
   if (directorInventoryPollTimer) return;
   directorInventoryPollTimer = window.setInterval(() => {
-    if (isEditingTextInput() || isInventoryModalInputActive() || isDirectorScrollProtected()) return;
+    if (isEditingTextInput() || isInventoryModalInputActive() || isAppScrollProtected()) return;
     actions.refreshCloudInventory({ silent: true, checkStatus: true });
   }, DIRECTOR_INVENTORY_POLL_INTERVAL_MS);
 }
@@ -2973,7 +2989,7 @@ function updateLiveClockNodes() {
       state.session.loggedIn &&
       !isEditingTextInput() &&
       !isInventoryModalInputActive() &&
-      !isDirectorScrollProtected()
+      !isAppScrollProtected()
     ) {
       actions.tickClock();
     }
@@ -3011,13 +3027,13 @@ function syncInstitutionSharedStatePolling() {
   if (institutionStatePollTimer) return;
 
   if (!state._holdNotify) {
-    if (!isDirectorScrollProtected()) {
+    if (!isAppScrollProtected()) {
       actions.refreshInstitutionSharedState({ silent: true });
     }
   }
   institutionStatePollTimer = window.setInterval(() => {
     if (isEditingTextInput()) return;
-    if (isDirectorScrollProtected()) return;
+    if (isAppScrollProtected()) return;
     actions.refreshInstitutionSharedState({ silent: true });
   }, 12000);
 }
