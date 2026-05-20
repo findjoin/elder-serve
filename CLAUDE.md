@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-青禾镇颐养护理院管理系统。Web 前端 + FastAPI 后端 + Android WebView 壳。
+养老院管理系统。Web 前端 + FastAPI 后端 + Android WebView 壳。
 
 **三种身份**：护工(caregiver)、院长(director)、家属(family)
 **核心逻辑**：院长制定日报模板 → 生成每日护理任务 → 按楼层分配给护工 → 护工执行并提交日报 → 院长实时查看
@@ -35,6 +35,7 @@ Android App (WebView 壳)
 | `caregiver-app/src/utils/cloudApi.js` | 前端 HTTP 客户端 |
 | `caregiver-app/src/data/mockData.js` | 本地初始数据 + `buildTasksFromConfiguration` |
 | `remote-main.py` | 后端 FastAPI 服务 |
+| `AGENTS.md` | Codex 项目硬规则（最高优先级，先读） |
 | `PROJECT_MAP.md` | 项目地图（路由、API、业务流程速查） |
 | `DATA_ARCHITECTURE.md` | 云端数据库架构（14 表、关系链、API 概览） |
 | `CLAUDE.md` | 本文件（开发习惯 + 操作手册） |
@@ -120,7 +121,7 @@ Android App (WebView 壳)
 2. 模板有 4 个 section（生活照料、饮食照料、护理协助、健康监测），每节有若干 items
 3. 院长保存模板 → `POST /api/daily-report-template` → 服务端自动 `regenerate_tasks_for_elders`
 4. 护工端/院长端轮询 `GET /api/tasks` → 服务端检查当天任务数=0 时自动 `generate_tasks_for_date`
-5. 任务按**楼层**分配给护工（服务端 `_resolve_caregiver_for_elder`：assignedCaregiverId 优先 → 同楼层轮转）
+5. 任务按**院长分配事实**分配给护工（服务端 `_resolve_caregiver_for_elder`：assignedCaregiverId 优先；未指定时才按护工常驻楼层兜底）
 6. **前端不再生成本地任务** — `buildTasksFromConfiguration` 已废弃，`rebuildTasks` 已删除
 
 ### 护工日报提交流程
