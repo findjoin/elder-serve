@@ -1157,6 +1157,18 @@ export function createMockState() {
       },
       directorReportTemplateEditingId: "",
       directorTaskDetailId: "",
+      directorAssistantOpen: false,
+      directorAssistantInput: "",
+      directorAssistantLoading: false,
+      directorAssistantError: "",
+      directorAssistantMessages: [
+        {
+          role: "assistant",
+          text: "我是院长端 AI 助手。可以问我页面怎么操作、某位老人或护工的当前情况，也可以让我准备一个需要你确认的操作建议。",
+          actions: [],
+          warnings: [],
+        },
+      ],
       directorPlanDraft: null,
       directorPlanItemDraft: null,
       directorPersonnelType: "caregiver",

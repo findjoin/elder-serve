@@ -13,6 +13,7 @@ import {
   renderDirectorInventoryPage,
   renderDirectorPeoplePage,
   renderDirectorProfilePage,
+  renderDirectorAssistant,
   renderDirectorTaskDetailDialog,
   renderDirectorStatisticsPage,
   renderDirectorTemplateLibraryPage,
@@ -347,6 +348,13 @@ function renderDirectorTaskDetail() {
   const task = state.tasks.find((t) => t.id === taskId);
   if (!task) return "";
   return renderDirectorTaskDetailDialog(task, state);
+}
+
+function renderDirectorAssistantPanel() {
+  if (!(state.session.identity === "director" || state.session.identity === "admin" || state.session.identity === "superadmin")) {
+    return "";
+  }
+  return renderDirectorAssistant(selectors());
 }
 
 function renderCaregiverRecordDetail() {
@@ -1918,6 +1926,7 @@ function renderApp() {
       </section>
       ${renderTaskRecordDialog()}
       ${renderDirectorTaskDetail()}
+      ${renderDirectorAssistantPanel()}
       ${renderCaregiverRecordDetail()}
       ${renderToast()}
     </main>
@@ -2000,6 +2009,13 @@ function handleClick(event) {
   if (action === "enter-director") return actions.enterDirector();
   if (action === "toggle-login-menu") return actions.toggleLoginMenu();
   if (action === "close-login-menu") return actions.closeLoginMenu();
+  if (action === "open-director-assistant") return actions.openDirectorAssistant();
+  if (action === "close-director-assistant") return actions.closeDirectorAssistant();
+  if (action === "send-director-assistant") {
+    const input = app.querySelector("[data-director-assistant-input]");
+    return actions.sendDirectorAssistantMessage(input?.value || "");
+  }
+  if (action === "run-director-assistant-action") return actions.runDirectorAssistantAction(value);
   if (action === "open-dev-login") return actions.openDevLogin();
   if (action === "close-dev-login") return actions.closeDevLogin();
   if (action === "dev-login-account") {
@@ -2597,6 +2613,11 @@ function handleInput(event) {
 
   if (event.target.matches("[data-director-resident-search]")) {
     actions.setDirectorResidentSearch(event.target.value);
+    return;
+  }
+
+  if (event.target.matches("[data-director-assistant-input]")) {
+    actions.setDirectorAssistantInput(event.target.value);
     return;
   }
 

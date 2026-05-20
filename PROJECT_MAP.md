@@ -3351,3 +3351,35 @@ director-care-plans 页面拖拽/点击分配老人
 - 任何后台静默刷新只要可能触发 `notify()`，都必须检查当前角色页面是否正在滚动或输入。
 - 滚动保护不能只做院长端；护工端和后续家属端如果有后台轮询，也必须接入统一保护。
 - 显式用户操作可以立即渲染；静默轮询必须避开滚动窗口或做局部 patch。
+
+### 2026-05-21 院长端 OpenClaw AI 助手 Demo
+
+现象：
+- 用户希望院长端内置 AI 助手，可以问不会操作的地方，并逐步支持替院长准备一些 APP 操作。
+
+架构决策：
+- AI key 和 URL 只能放在后端，使用现有 `OPENCLAW_GATEWAY_URL/OPENCLAW_AUTH_TOKEN/OPENCLAW_TEXT_MODEL`。
+- 前端只调用后端代理接口，不能暴露 OpenClaw key。
+- AI demo 不直接写数据库，不直接操作 DOM；只能返回回答和建议动作。
+- 当前 demo 仅允许 `open_page` 低风险动作直接执行；写操作需要后续确认卡片体系。
+
+实现：
+- `remote-main.py`：新增 `DirectorAssistantRequest`、`build_director_assistant_prompt()`、`POST /api/ai/director-assistant`。
+- 后端为 AI 注入当前机构的护工、老人、当天任务、库存概要，并要求 OpenClaw 返回严格 JSON。
+- `cloudApi.js`：新增 `askDirectorAssistant()`。
+- `state.js`：新增院长 AI 助手状态、发送消息 action、建议动作执行入口。
+- `directorPage.js/pages.css/main.js`：院长端通用头部增加 AI 助手按钮，AI 面板由全局渲染层挂载，所有院长页面都能打开。
+- `remote-main.py`：OpenClaw 网关如果返回 UTF-8 被误按 Latin-1 解码的中文，后端统一修复后再返回前端。
+- `DATA_ARCHITECTURE.md`：记录 AI 助手事实源、权限边界和动作限制。
+
+验证：
+- 后端 `python -m py_compile remote-main.py` 必须通过。
+- 前端发布后确认 APK 安装版本。
+- 院长端打开 AI 助手，输入问题后应由 `/api/ai/director-assistant` 返回中文回答；若 OpenClaw 不可用，前端应显示错误而不是白屏。
+- 不只在院长首页验证，人员、方案、库存等院长页面点击通用头部 AI 按钮也必须能看到同一个 AI 面板。
+
+禁止再犯：
+- AI 不能直接写事实表，必须走白名单 action/API。
+- AI 不能跨机构读取上下文。
+- 写操作必须有确认卡片和操作日志后才能执行，不能从自然语言直接落库。
+- 通用头部里的入口不能只在某一个页面渲染对应弹窗；入口和面板必须在同一全局作用域可用。

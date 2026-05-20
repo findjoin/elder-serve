@@ -205,6 +205,14 @@ export async function fetchSyncStatus(filters = {}) {
   return requestJson(`/api/sync/status${suffix}`, { timeout });
 }
 
+export async function askDirectorAssistant(payload = {}) {
+  return requestJson("/api/ai/director-assistant", {
+    method: "POST",
+    body: JSON.stringify(payload),
+    timeout: payload.timeout || 90000,
+  });
+}
+
 export async function upsertAttendanceRecord(payload) {
   const search = new URLSearchParams();
   if (payload?.institutionId) search.set("institutionId", String(payload.institutionId));

@@ -1,6 +1,7 @@
 ﻿import { renderAvatar, renderIcon } from "../utils/caregiverUi.js";
 
 function renderDirectorHeader(title, date, actionsHtml = "") {
+  const assistantButton = `<button type="button" class="director-ai-button" data-action="open-director-assistant">${renderIcon("sparkles")} AI助手</button>`;
   return `
     <header class="director-header">
       <div class="director-header__main">
@@ -8,9 +9,63 @@ function renderDirectorHeader(title, date, actionsHtml = "") {
           <h1>${title}</h1>
           <p>${date}</p>
         </div>
-        ${actionsHtml ? `<div class="director-header__actions">${actionsHtml}</div>` : ""}
+        <div class="director-header__actions">${actionsHtml || ""}${assistantButton}</div>
       </div>
     </header>
+  `;
+}
+
+export function renderDirectorAssistant(selectors) {
+  const assistant = selectors.directorAssistant || {};
+  if (!assistant.open) {
+    return `<button type="button" class="director-ai-fab" data-action="open-director-assistant">${renderIcon("sparkles")}<span>AI</span></button>`;
+  }
+  const messages = assistant.messages || [];
+  return `
+    <section class="director-ai-panel" role="dialog" aria-modal="true">
+      <button type="button" class="director-ai-panel__backdrop" data-action="close-director-assistant" aria-label="关闭AI助手"></button>
+      <div class="director-ai-panel__dialog">
+        <div class="director-ai-panel__head">
+          <div>
+            <strong>院长端 AI 助手</strong>
+            <span>Demo：可问操作方法和当前云端数据，写操作只给建议。</span>
+          </div>
+          <button type="button" class="icon-button" data-action="close-director-assistant">${renderIcon("close")}</button>
+        </div>
+        <div class="director-ai-panel__messages">
+          ${messages
+            .map((message, messageIndex) => `
+              <article class="director-ai-message director-ai-message--${message.role === "user" ? "user" : "assistant"}">
+                <p>${message.text || ""}</p>
+                ${
+                  message.warnings?.length
+                    ? `<div class="director-ai-message__warnings">${message.warnings.map((item) => `<span>${item}</span>`).join("")}</div>`
+                    : ""
+                }
+                ${
+                  message.actions?.length
+                    ? `<div class="director-ai-actions">
+                        ${message.actions
+                          .map((item, actionIndex) => `
+                            <button type="button" class="button button--small ${item.requiresConfirmation ? "button--secondary" : "button--primary"}" data-action="run-director-assistant-action" data-value="${messageIndex}:${actionIndex}">
+                              ${item.label || item.type || "执行建议"}
+                            </button>
+                          `)
+                          .join("")}
+                      </div>`
+                    : ""
+                }
+              </article>
+            `)
+            .join("")}
+          ${assistant.loading ? '<article class="director-ai-message director-ai-message--assistant"><p>AI 正在分析当前页面和云端数据...</p></article>' : ""}
+        </div>
+        <div class="director-ai-panel__input">
+          <textarea data-director-assistant-input rows="3" placeholder="例如：李美兰今天还有哪些任务？怎么给老人发布临时任务？">${assistant.input || ""}</textarea>
+          <button type="button" class="button button--primary" data-action="send-director-assistant" ${assistant.loading ? "disabled" : ""}>发送</button>
+        </div>
+      </div>
+    </section>
   `;
 }
 

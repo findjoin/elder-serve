@@ -694,6 +694,17 @@ login()
 - 普通院长/护工/家属登录和 `/api/auth/me` 会实时检查机构是否 `suspended`；暂停机构返回 `403`，超级管理员仍可进入后台调整配额或恢复机构。
 - 配额暂停是机构级服务开关，不是前端 UI 状态；不能只在页面隐藏入口。
 
+### 8.3 院长端 AI 助手 Demo
+
+- OpenClaw 配置只存在后端环境变量：`OPENCLAW_GATEWAY_URL`、`OPENCLAW_AUTH_TOKEN`、`OPENCLAW_TEXT_MODEL`；前端不能保存或展示 key。
+- Demo 接口：`POST /api/ai/director-assistant`。
+- 请求包含 `institutionId/message/route/selectedDate/pageContext/history`，后端会按机构读取 `caregivers/elders/published_tasks/inventory_items` 的概要作为上下文。
+- AI 输出只允许作为 `reply + suggestedActions + warnings` 返回；不能直接写库，不能直接执行 SQL，不能绕过既有业务 API。
+- 第一阶段只允许 `open_page` 这类低风险前端导航动作直接执行；分配老人、发布临时任务、调整库存、删除物资等写操作只能作为“建议动作”展示，后续必须接入确认卡片后再调用现有 action/API。
+- AI 回答必须受当前机构隔离约束，不能读取其它养老院上下文。
+- OpenClaw 返回内容由后端统一解析和编码修复；前端只消费后端返回的结构化 JSON，不能自行直连 OpenClaw 或处理 OpenClaw key。
+- 院长端 AI 面板属于全局院长端浮层，不能只挂在某一个页面，否则通用头部按钮在其它页面会失效。
+
 ### 9. 清理任务记录/异常记录的口径
 
 - 清理“任务记录”不是删除 `published_tasks` 任务行；只重置任务卡操作状态。

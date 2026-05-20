@@ -7,6 +7,7 @@
 } from "../data/mockData.js";
 import {
   createAnomaly,
+  askDirectorAssistant,
   createAuthUser,
   createInventoryUsage,
   disableAuthUser,
@@ -2671,6 +2672,33 @@ function getCurrentSessionInstitutionId() {
   return userInstitutionId || caregiverInstitutionId || stateInstitutionId || "";
 }
 
+function buildDirectorAssistantContext() {
+  const route = state.ui.route || "";
+  const selectedElderId =
+    state.ui.selectedDirectorPlanRoom ||
+    state.ui.selectedDirectorElder ||
+    state.ui.selectedDirectorCareRecordElderId ||
+    "";
+  const selectedElder = getElderById(selectedElderId);
+  return {
+    route,
+    activeTab: state.ui.activeTab || "",
+    selectedDate: state.director?.date || formatNowDate(),
+    selectedFloor: state.ui.selectedDirectorPlanFloor || state.ui.selectedDirectorFloor || "",
+    selectedElder: selectedElder
+      ? {
+          id: selectedElder.id,
+          name: selectedElder.name,
+          room: selectedElder.room,
+          floor: selectedElder.floor,
+          assignedCaregiverId: selectedElder.assignedCaregiverId || "",
+        }
+      : null,
+    taskOverview: selectors().directorTaskOverview || {},
+    inventorySummary: selectors().inventorySummary || {},
+  };
+}
+
 function getSyncVersionKey(institutionId, recordDate, domain) {
   return [institutionId || "", recordDate || "", domain || ""].join("|");
 }
@@ -3763,6 +3791,80 @@ export const actions = {
   closeDevLogin() {
     state.ui.devLoginOpen = false;
     notify();
+  },
+  openDirectorAssistant() {
+    state.ui.directorAssistantOpen = true;
+    notify();
+  },
+  closeDirectorAssistant() {
+    state.ui.directorAssistantOpen = false;
+    notify();
+  },
+  setDirectorAssistantInput(value = "") {
+    state.ui.directorAssistantInput = value;
+  },
+  async sendDirectorAssistantMessage(message = "") {
+    const text = String(message || state.ui.directorAssistantInput || "").trim();
+    if (!text || state.ui.directorAssistantLoading) return;
+    state.ui.directorAssistantOpen = true;
+    state.ui.directorAssistantInput = "";
+    state.ui.directorAssistantError = "";
+    state.ui.directorAssistantLoading = true;
+    state.ui.directorAssistantMessages = [
+      ...(state.ui.directorAssistantMessages || []),
+      { role: "user", text, actions: [], warnings: [] },
+    ].slice(-12);
+    notify();
+    try {
+      const response = await askDirectorAssistant({
+        institutionId: getCurrentSessionInstitutionId(),
+        message: text,
+        route: state.ui.route || "",
+        selectedDate: state.director?.date || formatNowDate(),
+        pageContext: buildDirectorAssistantContext(),
+        history: (state.ui.directorAssistantMessages || []).slice(-8).map((item) => ({
+          role: item.role,
+          text: item.text,
+        })),
+      });
+      state.ui.directorAssistantMessages = [
+        ...(state.ui.directorAssistantMessages || []),
+        {
+          role: "assistant",
+          text: response?.reply || "AI 暂时没有返回内容。",
+          actions: Array.isArray(response?.suggestedActions) ? response.suggestedActions : [],
+          warnings: Array.isArray(response?.warnings) ? response.warnings : [],
+          confidence: response?.confidence || "medium",
+          model: response?.model || "",
+        },
+      ].slice(-12);
+    } catch (error) {
+      state.ui.directorAssistantError = error?.message || "AI 助手请求失败";
+      state.ui.directorAssistantMessages = [
+        ...(state.ui.directorAssistantMessages || []),
+        {
+          role: "assistant",
+          text: state.ui.directorAssistantError,
+          actions: [],
+          warnings: ["请稍后重试或检查 OpenClaw 服务配置。"],
+          confidence: "low",
+        },
+      ].slice(-12);
+    } finally {
+      state.ui.directorAssistantLoading = false;
+      notify();
+    }
+  },
+  runDirectorAssistantAction(indexValue = "") {
+    const [messageIndexRaw, actionIndexRaw] = String(indexValue || "").split(":");
+    const message = (state.ui.directorAssistantMessages || [])[Number(messageIndexRaw)];
+    const action = message?.actions?.[Number(actionIndexRaw)];
+    if (!action) return;
+    if (action.type === "open_page" && action.route) {
+      state.ui.directorAssistantOpen = false;
+      return actions.navigate(action.route);
+    }
+    touchToast("这个 AI 建议需要后续接入确认执行，现在先按建议手动操作。");
   },
   async _loadCloudInstitutionInfo(instId) {
     try {
@@ -8216,6 +8318,13 @@ export function selectors() {
     inventoryItemActionUsages: selectedInventoryItemUsages,
     inventoryUsageFilters,
     inventoryUsageDraft: state.ui.inventoryUsageDraft,
+    directorAssistant: {
+      open: Boolean(state.ui.directorAssistantOpen),
+      input: state.ui.directorAssistantInput || "",
+      loading: Boolean(state.ui.directorAssistantLoading),
+      error: state.ui.directorAssistantError || "",
+      messages: state.ui.directorAssistantMessages || [],
+    },
   };
 }
 
