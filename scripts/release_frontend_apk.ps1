@@ -60,7 +60,9 @@ if (-not $SkipVersionBump) {
 
 Push-Location $androidDir
 try {
-  .\gradlew.bat clean assembleDebug
+  .\gradlew.bat clean assembleDebug `
+    -PcloudApiBaseUrl="$BaseUrl" `
+    -PcloudApiKey="$ApiKey"
 } finally {
   Pop-Location
 }
@@ -86,7 +88,7 @@ if (-not $SkipEmulatorInstall) {
   }
   & adb uninstall com.elderserve.caregiver | Out-Host
   & adb install $apkPath | Out-Host
-  & adb shell am start -n com.elderserve.caregiver/.MainActivity | Out-Host
+  & (Join-Path $scriptDir "sync_emulator_beijing_time.ps1") -LaunchApp | Out-Host
 }
 
 Write-Host "Release complete: $versionName ($versionCode)"

@@ -7,8 +7,8 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="护工端" />
-    <title>乡镇养老院智慧护理 APP - 护工端</title>
+    <meta name="apple-mobile-web-app-title" content="Caregiver" />
+    <title>Elder Serve App</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./assets/icons/icon-192.png" sizes="192x192" />
     <link rel="apple-touch-icon" href="./assets/icons/apple-touch-icon.png" />
@@ -18,7 +18,22 @@
     <link rel="stylesheet" href="./src/styles/pages.css" />
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <main style="min-height:100vh;display:grid;place-items:center;background:#f7f6f4;color:#333;font:16px sans-serif;">
+        <div>Loading app...</div>
+      </main>
+    </div>
+    <script>
+      window.addEventListener("error", function (event) {
+        var app = document.getElementById("app");
+        if (!app) return;
+        app.innerHTML = '<main style="min-height:100vh;display:grid;place-items:center;padding:24px;background:#f7f6f4;color:#333;font:16px sans-serif;"><div><strong>App startup failed</strong><p style="color:#777;">' + (event.message || "Please reopen the app") + '</p></div></main>';
+      });
+      window.addEventListener("unhandledrejection", function (event) {
+        var reason = event.reason && (event.reason.message || String(event.reason));
+        if (reason) console.warn("Startup promise rejected:", reason);
+      });
+    </script>
     <script type="module" src="./src/main.js"></script>
   </body>
 </html>

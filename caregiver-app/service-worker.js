@@ -1,4 +1,4 @@
-const CACHE_NAME = "caregiver-app-shell-v6";
+const CACHE_NAME = "caregiver-app-shell-v7";
 
 const APP_SHELL = [
   "./",

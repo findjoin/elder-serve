@@ -23,7 +23,9 @@ import android.print.PrintDocumentAdapter;
 import android.print.PrintManager;
 import android.provider.MediaStore;
 import android.provider.Settings;
+import android.content.SharedPreferences;
 import android.util.Base64;
+import android.util.Log;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -66,9 +68,12 @@ import java.util.List;
 import java.util.Locale;
 
 public class MainActivity extends AppCompatActivity {
+    private static final String TAG = "ElderServe";
     private static final String JS_BRIDGE_NAME = "AndroidBridge";
     private static final String CLOCK_IN_CALLBACK = "__onCaregiverNativeClockIn";
     private static final String UPDATE_CALLBACK = "__onElderServeUpdate";
+    private static final String PREFS_NAME = "elder_serve_native";
+    private static final String PREF_LAST_VERSION_CODE = "last_version_code";
     private static final String[] LOCATION_PERMISSIONS = new String[] {
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
@@ -158,9 +163,11 @@ public class MainActivity extends AppCompatActivity {
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+        settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
+
+        clearWebCacheAfterVersionChange();
 
         WebViewAssetLoader assetLoader = new WebViewAssetLoader.Builder()
-                .setHttpAllowed(true)
                 .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
                 .build();
 
@@ -219,6 +226,7 @@ public class MainActivity extends AppCompatActivity {
         webView.addJavascriptInterface(new ClockInBridge(), JS_BRIDGE_NAME);
 
         if (savedInstanceState == null) {
+            Log.i(TAG, "Loading web asset entry: " + getString(R.string.web_asset_entry));
             webView.loadUrl(getString(R.string.web_asset_entry));
         } else {
             webView.restoreState(savedInstanceState);
@@ -574,6 +582,24 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private void clearWebCacheAfterVersionChange() {
+        long currentVersionCode = getCurrentVersionCode();
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        long previousVersionCode = prefs.getLong(PREF_LAST_VERSION_CODE, 0L);
+        if (previousVersionCode == currentVersionCode) {
+            return;
+        }
+
+        try {
+            webView.clearCache(true);
+            webView.clearHistory();
+        } catch (Exception error) {
+            Log.w(TAG, "Failed to clear WebView cache after app update", error);
+        }
+
+        prefs.edit().putLong(PREF_LAST_VERSION_CODE, currentVersionCode).apply();
+    }
+
     private String getCurrentVersionName() {
         try {
             PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
@@ -881,6 +907,12 @@ public class MainActivity extends AppCompatActivity {
 
     private final class LocalAssetWebChromeClient extends WebChromeClient {
         @Override
+        public boolean onConsoleMessage(android.webkit.ConsoleMessage consoleMessage) {
+            Log.i(TAG, "Console " + consoleMessage.messageLevel() + " " + consoleMessage.sourceId() + ":" + consoleMessage.lineNumber() + " " + consoleMessage.message());
+            return super.onConsoleMessage(consoleMessage);
+        }
+
+        @Override
         public boolean onShowFileChooser(
                 WebView view,
                 ValueCallback<Uri[]> filePathCallback,
@@ -937,6 +969,12 @@ public class MainActivity extends AppCompatActivity {
         @Nullable
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
             return assetLoader.shouldInterceptRequest(request.getUrl());
+        }
+
+        @Override
+        public void onPageFinished(WebView view, String url) {
+            super.onPageFinished(view, url);
+            Log.i(TAG, "Page finished: " + url);
         }
 
         @Override
