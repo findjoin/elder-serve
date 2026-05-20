@@ -3271,3 +3271,28 @@ director-care-plans 页面拖拽/点击分配老人
 - 轮询类任务必须有 in-flight 单飞锁，不能允许慢请求堆积。
 - 轻量状态检查和全量数据拉取必须分别设置短超时；不能把 30 秒默认超时用于高频轮询。
 - 只有确认无需拉取或拉取成功后，才能提交本地 sync version；失败不能污染版本缓存。
+
+### 2026-05-21 同一分钟反复打卡导致院长端任务状态一分钟后才同步修复
+
+现象：
+- 护工端反复点击“房间整理”等同一任务卡，云端超管表已经显示完成，但院长端等待 30 秒以上仍未同步，约 1 分钟左右才更新。
+- 该问题在同一分钟内连续取消/完成同一任务时更容易出现。
+
+根因：
+- 前端 `serializeCloudTask()` 提交的 `updatedAt` 是展示时间，精度只有 `YYYY-MM-DD HH:mm`。
+- 后端 `/api/tasks` 和 `/api/tasks/bulk` 直接把 `request.updatedAt` 写入 `published_tasks.updated_at`。
+- `/api/sync/status` 的 tasks 域版本只由 `record_date + count + latestUpdatedAt` 生成；同一分钟内多次任务状态变化时 `latestUpdatedAt` 没变，院长端状态检查误判 `changed=false`，所以不会拉 `/api/tasks`。
+
+修复：
+- `remote-main.py`：`upsert_published_task()` 和 `_upsert_published_task_row()` 的 `existing.updated_at` 改为后端 `current_time = now_iso()`，不再接受前端 `updatedAt` 作为同步版本时间。
+- 前端提交的 `completedAt/recordedAt/exceptionReportedAt` 仍保留为业务时间；只有 `updated_at` 作为同步检测字段必须使用服务器高精度写入时间。
+- `DATA_ARCHITECTURE.md`：补充 `published_tasks.updated_at` 是任务同步版本事实源，禁止使用前端分钟级时间。
+
+验证：
+- `python -m py_compile remote-main.py` 通过。
+- 部署后 `systemctl is-active elder.service` 必须返回 `active`。
+- 同一分钟内连续取消/完成同一任务卡，`GET /api/sync/status?domains=tasks` 的 tasks version 必须变化，院长端应在下一轮 3 秒状态检查后刷新。
+
+禁止再犯：
+- 所有用于同步版本、轮询判断、增量检查的 `updated_at` 必须由后端生成，不能信任前端传入时间。
+- 前端业务显示时间可以分钟级；后端事实表版本时间必须具备秒/微秒级变化能力。

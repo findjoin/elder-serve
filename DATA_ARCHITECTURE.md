@@ -675,6 +675,7 @@ login()
 - 当前实现接口：`GET /api/sync/status?institutionId=&recordDate=&domains=tasks,personnel,templates,inventory,anomalies,attendance&known={...}`。
 - `known` 是客户端上次保存的 `{ domain: version }`；服务端按域返回 `version/count/latestUpdatedAt/changed`。
 - 状态检查接口按业务域返回版本摘要，例如任务、人员、老人、模板、库存、异常分别返回 `version/updatedAt/count/checksum`。
+- `published_tasks.updated_at` 是任务同步版本事实源，必须由后端在写入时使用高精度服务器时间 `now_iso()` 生成；不能使用前端提交的分钟级 `updatedAt`，否则同一分钟内多次打卡会让 `/api/sync/status` 误判无变化。
 - 客户端保存每个业务域最后一次成功同步的 `version` 或 `checksum`；轮询时只请求轻量状态。
 - 如果服务端返回 `304 Not Modified` 或 `changed=false`，前端不能调用全量列表接口，也不能触发 `notify()` 重渲染。
 - 如果服务端返回 `200 changed=true`，前端只拉取变更域的数据；例如只有 `published_tasks` 变化时，只刷新任务，不刷新人员、模板、库存。
